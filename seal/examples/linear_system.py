@@ -2,12 +2,32 @@
 linear system
 """
 
-import copy
 import numpy as np
 import casadi as cs
 from scipy import linalg
 from scipy.linalg import solve_discrete_are
 from acados_template import AcadosOcp, AcadosOcpSolver
+from seal.mpc import MPC
+
+
+class LinearSystemMPC(MPC):
+    """docstring for MPC."""
+
+    ocp: AcadosOcp
+    ocp_solver: AcadosOcpSolver
+    ocp_sensitivity_solver: AcadosOcpSolver
+
+    def __init__(self, param, discount_factor=0.99, **kwargs):
+        super(LinearSystemMPC, self).__init__()
+
+        ocp_solver_kwargs = kwargs["ocp_solver"] if "ocp_solver" in kwargs else {}
+
+        ocp_sensitivity_solver_kwargs = kwargs["ocp_sensitivity_solver"] if "ocp_sensitivity_solver" in kwargs else {}
+
+        self.ocp = export_parametric_ocp(param)
+
+        self.ocp_solver = setup_ocp_solver(self.ocp, **ocp_solver_kwargs)
+        self.ocp_sensitivity_solver = setup_ocp_sensitivity_solver(self.ocp, **ocp_sensitivity_solver_kwargs)
 
 
 def disc_dyn_expr(x, u, param):
@@ -38,9 +58,7 @@ def cost_expr_ext_cost_e(x, param, N):
     equation.
     """
 
-    return 0.5 * cs.mtimes(
-        [x.T, solve_discrete_are(param["A"], param["B"], param["Q"], param["R"]), x]
-    )
+    return 0.5 * cs.mtimes([x.T, solve_discrete_are(param["A"], param["B"], param["Q"], param["R"]), x])
 
 
 def get_parameter(field, p) -> cs.DM:
@@ -98,8 +116,15 @@ def setup_ocp_solver(
     ocp.solver_options.hessian_approx = hessian_approx
     ocp.solver_options.qp_solver = qp_solver
     ocp.solver_options.qp_solver_ric_alg = qp_solver_ric_alg
+    ocp.solver_options.with_value_sens_wrt_params = True
+    ocp.solver_options.with_solution_sens_wrt_params = True
 
-    return AcadosOcpSolver(ocp, **kwargs)
+    ocp_solver = AcadosOcpSolver(ocp, **kwargs)
+    # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
+    for stage in range(ocp_solver.acados_ocp.dims.N + 1):
+        ocp_solver.set(stage, "p", ocp_solver.acados_ocp.parameter_values)
+
+    return ocp_solver
 
 
 def setup_ocp_sensitivity_solver(
@@ -107,8 +132,6 @@ def setup_ocp_sensitivity_solver(
     qp_solver: str = "PARTIAL_CONDENSING_HPIPM",
     integrator_type: str = "DISCRETE",
     nlp_solver_type: str = "SQP",
-    # hessian_approx: str = "EXACT",
-    # qp_solver_ric_alg: int = 0,
     **kwargs,
 ) -> AcadosOcpSolver:
     ocp.model.name = f"{ocp.model.name}_sensitivity"
@@ -119,8 +142,15 @@ def setup_ocp_sensitivity_solver(
     ocp.solver_options.qp_solver = qp_solver
     ocp.solver_options.hessian_approx = "EXACT"
     ocp.solver_options.qp_solver_ric_alg = 0
+    ocp.solver_options.with_value_sens_wrt_params = True
+    ocp.solver_options.with_solution_sens_wrt_params = True
 
-    return AcadosOcpSolver(ocp, **kwargs)
+    ocp_solver = AcadosOcpSolver(ocp, **kwargs)
+    # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
+    for stage in range(ocp_solver.acados_ocp.dims.N + 1):
+        ocp_solver.set(stage, "p", ocp_solver.acados_ocp.parameter_values)
+
+    return ocp_solver
 
 
 def export_parametric_ocp(
@@ -170,9 +200,7 @@ def export_parametric_ocp(
         cs.reshape(f, -1, 1),
     )
 
-    ocp.parameter_values = np.concatenate(
-        [param[key].T.reshape(-1, 1) for key in ["A", "B", "b", "V_0", "f"]]
-    )
+    ocp.parameter_values = np.concatenate([param[key].T.reshape(-1, 1) for key in ["A", "B", "b", "V_0", "f"]])
 
     ocp.model.disc_dyn_expr = A @ ocp.model.x + B @ ocp.model.u + b
     # ocp.model.disc_dyn_expr = param["A"] @ ocp.model.x + param["B"] @ ocp.model.u + param["b"]
@@ -206,19 +234,13 @@ def export_parametric_ocp(
 
     elif cost_type == "EXTERNAL":
         ocp.cost.cost_type_0 = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost_0 = cost_expr_ext_cost_0(
-            ocp.model.x, ocp.model.u, ocp.model.p
-        )
+        ocp.model.cost_expr_ext_cost_0 = cost_expr_ext_cost_0(ocp.model.x, ocp.model.u, ocp.model.p)
 
         ocp.cost.cost_type = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(
-            ocp.model.x, ocp.model.u, ocp.model.p
-        )
+        ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(ocp.model.x, ocp.model.u, ocp.model.p)
 
         ocp.cost.cost_type_e = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(
-            ocp.model.x, param, ocp.dims.N
-        )
+        ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(ocp.model.x, param, ocp.dims.N)
 
     ocp.constraints.idxbx_0 = np.array([0, 1])
     ocp.constraints.lbx_0 = np.array([-1.0, -1.0])

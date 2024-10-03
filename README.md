@@ -9,6 +9,15 @@ Model Predictive Control (MPC) policies. It is built on top of
 
 ## Installation
 
+### Dependencies
+
+SEAL requires the following dependencies that need to be installed separately:
+
+- [casadi](https://web.casadi.org/) for symbolic computations
+- [acados](https://docs.acados.org/index.html) for generating OCP solvers
+
+### Installation steps
+
 Create python virtual environment and install the (editable) package with the following commands:
 
 ``` bash
@@ -16,16 +25,19 @@ Create python virtual environment and install the (editable) package with the fo
     cd <PATH_TO_VENV_DIRECTORY>
     virtualenv seal_venv --python=/usr/bin/python3
     source seal_venv/bin/activate
+```
+
+Install the minimum:
+
+``` bash
     python -m pip install -e .
 ```
 
-## Dependencies
+or install with optional dependencies (e.g. for testing and linting):
 
-SEAL requires the following dependencies:
-
-- [casadi](https://web.casadi.org/) for symbolic computations
-- [acados](https://docs.acados.org/index.html) for generating OCP solvers
-- [gymnasium](https://gymnasium.farama.org/) for environments.
+``` bash
+    python -m pip install -e .[test,lint]
+```
 
 ## Usage
 

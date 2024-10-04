@@ -5,10 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "SEAL"
 version = "2024.0.0"
-dependencies = [
-  "numpy<2.0.0",
-  "gymnasium",
-]
+dependencies = ["torch", "gymnasium", "scipy", "numpy"]
 
 requires-python = ">=3.8"
 authors = [{ name = "Dirk Reinhardt", email = "dirk.p.reinhardt@ntnu.no" }]
@@ -16,14 +13,19 @@ maintainers = [{ name = "Dirk Reinhardt", email = "dirk.p.reinhardt@ntnu.no" }]
 description = "Super Efficient Acados Learning"
 readme = "README.md"
 license = { file = "LICENSE.txt" }
-keywords = ["Reinforcement Learning", "Imitation Learning", "Model Predictive Control"]
+keywords = [
+  "Reinforcement Learning",
+  "Imitation Learning",
+  "Model Predictive Control",
+]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Programming Language :: Python",
 ]
 
 [project.optional-dependencies]
-test = ["pytest", "flake8", "ruff"]
+test = ["pytest"]
+lint = ["flake8", "ruff"]
 
 [tool.setuptools]
 packages = ["seal"]

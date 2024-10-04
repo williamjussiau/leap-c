@@ -1,8 +1,6 @@
 import os
 import matplotlib.pyplot as plt
-import pytest
 import numpy as np
-import casadi as cs
 from acados_template import AcadosOcp, AcadosOcpSolver
 from seal.examples.linear_system import (
     export_parametric_ocp,
@@ -36,14 +34,30 @@ def get_test_param():
         dict: A dictionary containing the parameters of the linear system.
     """
     return {
-        "A": np.array([[1.0, 0.1], [0.0, 1.0]]),
-        "B": np.array([[0.0], [0.1]]),
+        "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
+        "B": np.array([[0.03125], [0.25]]),
+        "Q": np.identity(2),
+        "R": np.identity(1),
         "b": np.array([[0.0], [0.0]]),
-        "V_0": np.array([0.0]),
         "f": np.array([[0.0], [0.0], [0.0]]),
-        "Q": np.eye(2),
-        "R": np.eye(1),
+        "V_0": np.array([1e-3]),
     }
+
+
+def test_set_p_get_p():
+    """
+    Test if the set_p and get_p methods work correctly.
+    """
+
+    mpc = set_up_mpc()
+
+    p = mpc.get_p()
+
+    p += np.random.randn(p.shape[0], p.shape[1])
+
+    mpc.set_p(p)
+
+    assert np.allclose(mpc.get_p(), p)
 
 
 def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
@@ -194,9 +208,9 @@ def test_pi_update(
 
     test_param = set_up_test_parameters(mpc, np_test, varying_param_label=varying_param_label)
 
-    pi, dpi_dp = mpc.pi_update(x0=x0, p=test_param[:, 0])
+    absolute_difference = run_test_pi_update_for_varying_parameters(mpc, x0, test_param, plot)
 
-    assert not np.isnan(dpi_dp).any(), "Gradient of pi includes NaN."
+    assert np.median(absolute_difference) <= 1e-1
 
 
 def test_closed_loop(
@@ -265,4 +279,3 @@ def test_open_loop(
 
 if __name__ == "__main__":
     test_pi_update(build_code=True, generate_code=True, np_test=100, plot=True)
-    # test_closed_loop(plot=True)

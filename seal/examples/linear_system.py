@@ -62,17 +62,6 @@ def cost_expr_ext_cost_e(x, param, N):
 
 
 def get_parameter(field, p) -> cs.DM:
-    """
-    Retrieves and reshapes a parameter vector based on the specified field.
-
-    Args:
-        field (str): The field name indicating which parameter to retrieve.
-                     Possible values are "A", "B", "b", "V_0", and "f".
-        p (cs.DM): A CasADi DM vector containing the parameters.
-
-    Returns:
-        cs.SX: The reshaped parameter corresponding to the specified field.
-    """
     if field == "A":
         return cs.reshape(p[:4], 2, 2)
     elif field == "B":
@@ -88,28 +77,12 @@ def get_parameter(field, p) -> cs.DM:
 def setup_ocp_solver(
     ocp: AcadosOcp,
     qp_solver: str = "PARTIAL_CONDENSING_HPIPM",
-    hessian_approx: str = "GAUSS_NEWTON",
+    hessian_approx: str = "EXACT",
     integrator_type: str = "DISCRETE",
     nlp_solver_type: str = "SQP",
-    qp_solver_ric_alg: int = 0,
+    qp_solver_ric_alg: int = 1,
     **kwargs,
 ) -> AcadosOcpSolver:
-    """
-    Set up an Optimal Control Problem (OCP) solver using the provided parameters.
-
-    Args:
-        param (dict): Dictionary containing the nominal parameters for the OCP.
-        qp_solver (str, optional): Quadratic programming solver to use.
-        hessian_approx (str, optional): Method for Hessian approximation.
-        integrator_type (str, optional): Type of integrator to use.
-        nlp_solver_type (str, optional): Type of Nonlinear Programming (NLP) solver.
-        name (str, optional): Name of the OCP.
-        **kwargs: Additional keyword arguments for the OCP solver.
-
-    Returns:
-        AcadosOcpSolver: An instance of the AcadosOcpSolver configured with the provided parameters.
-    """
-
     ocp.solver_options.tf = ocp.dims.N
     ocp.solver_options.integrator_type = integrator_type
     ocp.solver_options.nlp_solver_type = nlp_solver_type
@@ -120,6 +93,7 @@ def setup_ocp_solver(
     ocp.solver_options.with_solution_sens_wrt_params = True
 
     ocp_solver = AcadosOcpSolver(ocp, **kwargs)
+
     # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
     for stage in range(ocp_solver.acados_ocp.dims.N + 1):
         ocp_solver.set(stage, "p", ocp_solver.acados_ocp.parameter_values)
@@ -132,20 +106,27 @@ def setup_ocp_sensitivity_solver(
     qp_solver: str = "PARTIAL_CONDENSING_HPIPM",
     integrator_type: str = "DISCRETE",
     nlp_solver_type: str = "SQP",
+    hessian_approx: str = "EXACT",
     **kwargs,
 ) -> AcadosOcpSolver:
     ocp.model.name = f"{ocp.model.name}_sensitivity"
 
     ocp.solver_options.tf = ocp.dims.N
-    ocp.solver_options.integrator_type = integrator_type
     ocp.solver_options.nlp_solver_type = nlp_solver_type
+    ocp.solver_options.nlp_solver_step_length = 0.0
+    ocp.solver_options.nlp_solver_max_iter = 1
+    ocp.solver_options.qp_solver_iter_max = 200
+    ocp.solver_options.tol = 1e-10
+    ocp.solver_options.integrator_type = integrator_type
     ocp.solver_options.qp_solver = qp_solver
-    ocp.solver_options.hessian_approx = "EXACT"
-    ocp.solver_options.qp_solver_ric_alg = 0
-    ocp.solver_options.with_value_sens_wrt_params = True
+    ocp.solver_options.qp_solver_ric_alg = 1
+    ocp.solver_options.qp_solver_cond_N = ocp.dims.N
+    ocp.solver_options.hessian_approx = hessian_approx
     ocp.solver_options.with_solution_sens_wrt_params = True
+    ocp.solver_options.with_value_sens_wrt_params = True
 
     ocp_solver = AcadosOcpSolver(ocp, **kwargs)
+
     # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
     for stage in range(ocp_solver.acados_ocp.dims.N + 1):
         ocp_solver.set(stage, "p", ocp_solver.acados_ocp.parameter_values)
@@ -203,11 +184,6 @@ def export_parametric_ocp(
     ocp.parameter_values = np.concatenate([param[key].T.reshape(-1, 1) for key in ["A", "B", "b", "V_0", "f"]])
 
     ocp.model.disc_dyn_expr = A @ ocp.model.x + B @ ocp.model.u + b
-    # ocp.model.disc_dyn_expr = param["A"] @ ocp.model.x + param["B"] @ ocp.model.u + param["b"]
-
-    # f_disc = cs.Function("f", [ocp.model.x, ocp.model.u], [ocp.model.disc_dyn_expr])
-
-    # print(f_disc(np.array([0.5, 0.5], 0)))
 
     if cost_type == "LINEAR_LS":
         ocp.cost.cost_type = "LINEAR_LS"
@@ -229,8 +205,6 @@ def export_parametric_ocp(
         ocp.cost.yref_0 = np.zeros(ocp.dims.nx + ocp.dims.nu)
         ocp.cost.yref = np.zeros(ocp.dims.nx + ocp.dims.nu)
         ocp.cost.yref_e = np.zeros(ocp.dims.nx)
-
-    # :math:`l(x,u,z) = 0.5 \cdot || V_x \, x + V_u \, u + V_z \, z - y_\\text{ref}||^2_W`,
 
     elif cost_type == "EXTERNAL":
         ocp.cost.cost_type_0 = "EXTERNAL"

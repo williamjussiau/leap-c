@@ -123,7 +123,7 @@ class MPC(ABC):
 
         self.ocp_solver.store_iterate(filename="iterate.json", overwrite=True, verbose=False)
         self.ocp_sensitivity_solver.load_iterate(filename="iterate.json", verbose=False)
-        self.ocp_sensitivity_solver.solve_for_x0(x0, fail_on_nonzero_status=True, print_stats_on_failure=True)
+        self.ocp_sensitivity_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=False)
 
         # Calculate the policy gradient
         _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "params_global")

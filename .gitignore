@@ -177,3 +177,7 @@ test/cuda_devices_info.py
 test/mini_example.py
 *.png
 test.gin
+
+# Acados generated stuff (json files, c_generated_code)
+*.json
+c_generated_code

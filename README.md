@@ -41,8 +41,9 @@ or install with optional dependencies (e.g. for testing and linting):
 
 ## Usage
 
-Try an example with the following command:
+Check out tests for the linear system
+
 
 ``` bash
-    python examples/linear_system_mpc.py
+    python tests/seal/examples/test_linear_system.py
 ```

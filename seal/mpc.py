@@ -23,8 +23,9 @@ class MPC(ABC):
 
         self.discount_factor = gamma
 
-    def get_parameters(self) -> np.ndarray:
-        return self.get_p()
+    @property
+    def N(self) -> int:
+        return self.ocp_solver.acados_ocp.dims.N
 
     def get_action(self, x0: np.ndarray) -> np.ndarray:
         """
@@ -107,19 +108,25 @@ class MPC(ABC):
 
         return optimal_value, optimal_value_gradient
 
-    def pi_update(self, x0: np.ndarray, p: np.ndarray = None) -> int:
-        if p is not None:
-            self.ocp_solver.acados_ocp.parameter_values = p
-            for stage in range(self.ocp_solver.acados_ocp.dims.N + 1):
-                self.ocp_solver.set(stage, "p", p)
-                self.ocp_sensitivity_solver.set(stage, "p", p)
+    def pi_update(self, x0: np.ndarray,
+                  initialization: dict[str, np.ndarray] | None = None,
+                  return_dudx: bool = False) -> tuple[np.ndarray, np.ndarray, int] | tuple[np.ndarray, np.ndarray, int, np.ndarray]:
+        """Solves the OCP for the initial state x0 and parameters p
+        and returns the first action of the horizon, as well as
+        the sensitivity of said action with respect to the parameters
+        and the status of the solver.
 
-        # Set initial state
-        self.ocp_solver.set(0, "lbx", x0)
-        self.ocp_solver.set(0, "ubx", x0)
+        Parameters:
+            x0: Initial state.
+            initialization: A map from the strings of fields (as in AcadosOcpSolver.set()) that should be initialized, to an np array which contains the values for those fields, being of shape (stages_of_that_field, field_dim).
+            return_dudx: Whether to also return the sensitivity of the action with respect to the state.
+        """
+        if initialization is not None:
+            self.initialize(initialization)
 
-        # Solve the optimization problem
-        pi = self.ocp_solver.solve_for_x0(x0)
+        # Solve the optimization problem for initial state x0
+        pi = self.ocp_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=True)
+        status = self.ocp_solver.get_status()
 
         self.ocp_solver.store_iterate(filename="iterate.json", overwrite=True, verbose=False)
         self.ocp_sensitivity_solver.load_iterate(filename="iterate.json", verbose=False)
@@ -128,7 +135,30 @@ class MPC(ABC):
         # Calculate the policy gradient
         _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "params_global")
 
-        return pi, dpidp
+        if not return_dudx:
+            return pi, dpidp, status
+        else:
+            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "initial_state")
+            return pi, dpidp, status, dpidx
+
+    def initialize(self, initialization: dict[str, np.ndarray]):
+        """Initializes the fields of the OCP solver with the given values.
+        Parameters:
+            initialization: A map from the strings of fields (as in AcadosOcpSolver.set()) that should be initialized, to an np array which contains the values for those fields, being of shape (stages_of_that_field, field_dim)
+        """
+        for field, val_trajectory in initialization.items():
+            if field == "p":
+                self.set_p(val_trajectory)
+            elif field == "x":
+                for stage in range(self.N + 1):
+                    self.ocp_solver.set(stage, field, val_trajectory[stage])
+                    self.ocp_sensitivity_solver.set(stage, field, val_trajectory[stage])
+            elif field == "u":
+                for stage in range(self.N):  # Setting u is not possible in the terminal stage.
+                    self.ocp_solver.set(stage, field, val_trajectory[stage])
+                    self.ocp_sensitivity_solver.set(stage, field, val_trajectory[stage])
+            else:
+                raise NotImplementedError("Setting this field is not implemented yet.")
 
     def get_dV_dp(self) -> float:
         """
@@ -169,24 +199,21 @@ class MPC(ABC):
         Set the value of the parameters.
 
         Args:
-            p: Parameters.
+            p: Parameters of shape (n, m), then n is the number of stages and m is number of parameters.
         """
-        self.ocp_solver.acados_ocp.parameter_values = p
-        for stage in range(self.ocp_solver.acados_ocp.dims.N + 1):
-            self.ocp_solver.set(stage, "p", p)
-            self.ocp_sensitivity_solver.set(stage, "p", p)
+        for stage in range(self.N + 1):
+            self.ocp_solver.set(stage, "p", p[stage, :])
+            self.ocp_sensitivity_solver.set(stage, "p", p[stage, :])
 
     def get_p(self) -> np.ndarray:
         """
         Get the value of the parameters for the nlp.
         """
-        return self.ocp_solver.acados_ocp.parameter_values
-
-    def get_parameter_values(self) -> np.ndarray:
-        """
-        Get the value of the parameters for the nlp.
-        """
-        return self.get_p()
+        params = []
+        N = self.ocp_solver.acados_ocp.dims.N
+        for stage in range(N + 1):
+            params.append(self.ocp_solver.get(stage, "p"))
+        return np.stack(params, axis=0)
 
     # def get_parameter_labels(self) -> list:
     #     return get_parameter_labels(self.ocp_solver.acados_ocp)
@@ -296,7 +323,7 @@ class MPC(ABC):
         """
         Set the discount factor.
 
-        NB: This overwrites the scaling of the cost function (control interval length by default).
+        NB: This overwrites the scaling of the cost function(control interval length by default).
 
         Args:
             gamma: Discount factor.
@@ -307,20 +334,19 @@ class MPC(ABC):
 
         self.discount_factor = discount_factor_
 
-        for stage in range(0, self.ocp_solver.acados_ocp.dims.N + 1):
-            self.ocp_solver.cost_set(stage, "scaling", discount_factor_**stage)
-            self.ocp_sensitivity_solver.cost_set(stage, "scaling", discount_factor_**stage)
+        set_discount_factor(self.ocp_solver, discount_factor_)
+        set_discount_factor(self.ocp_sensitivity_solver, discount_factor_)
 
     def get(self, stage, field):
         return self.ocp_solver.get(stage, field)
 
     def scale_action(self, action: np.ndarray) -> np.ndarray:
         """
-        Rescale the action from [low, high] to [-1, 1]
+        Rescale the action from [low, high] to[-1, 1]
         (no need for symmetric action space)
 
-        :param action: Action to scale
-        :return: Scaled action
+        : param action: Action to scale
+        : return: Scaled action
         """
         low = self.ocp.constraints.lbu
         high = self.ocp.constraints.ubu
@@ -329,11 +355,11 @@ class MPC(ABC):
 
     def unscale_action(self, action: np.ndarray) -> np.ndarray:
         """
-        Rescale the action from [-1, 1] to [low, high]
+        Rescale the action from [-1, 1] to[low, high]
         (no need for symmetric action space)
 
-        :param action: Action to scale
-        :return: Scaled action
+        : param action: Action to scale
+        : return: Scaled action
         """
         low = self.ocp_solver.acados_ocp.constraints.lbu
         high = self.ocp_solver.acados_ocp.constraints.ubu

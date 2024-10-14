@@ -151,8 +151,11 @@ def run_test_pi_update_for_varying_parameters(
 
     policy = []
     policy_gradient = []
+
     for i in range(np_test):
-        pi_i, dpidp_i = mpc.pi_update(x0=x0, p=test_param[:, i])
+        initial_values = dict(p=np.broadcast_to(test_param[None, :, i], (mpc.N+1, test_param.shape[0])))
+        pi_i, dpidp_i, status = mpc.pi_update(x0=x0, initialization=initial_values)
+        assert status == 0
         policy.append(pi_i)
         policy_gradient.append(dpidp_i)
 

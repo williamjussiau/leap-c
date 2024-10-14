@@ -334,9 +334,8 @@ class MPC(ABC):
 
         self.discount_factor = discount_factor_
 
-        for stage in range(0, self.ocp_solver.acados_ocp.dims.N + 1):
-            self.ocp_solver.cost_set(stage, "scaling", discount_factor_**stage)
-            self.ocp_sensitivity_solver.cost_set(stage, "scaling", discount_factor_**stage)
+        set_discount_factor(self.ocp_solver, discount_factor_)
+        set_discount_factor(self.ocp_sensitivity_solver, discount_factor_)
 
     def get(self, stage, field):
         return self.ocp_solver.get(stage, field)

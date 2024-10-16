@@ -74,7 +74,7 @@ class DynamicsSimFunction(autograd.Function):
         Su = np.zeros((batch_size, xdim, udim))
 
         for i in range(x.shape[0]):
-            # TODO (Jasper): Replace with methpd simulate!
+            # TODO (Jasper): Replace with method simulate!
             sim.set("x", x[i, :])
             sim.set("u", u[i, :])
             if p is not None:

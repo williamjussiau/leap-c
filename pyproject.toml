@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "SEAL"
 version = "2024.0.0"
-dependencies = ["torch", "gymnasium", "scipy", "numpy"]
+dependencies = ["torch", "gymnasium", "scipy", "numpy", "pandas"]
 
 requires-python = ">=3.8"
 authors = [{ name = "Dirk Reinhardt", email = "dirk.p.reinhardt@ntnu.no" }]

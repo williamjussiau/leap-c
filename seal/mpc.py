@@ -1,4 +1,8 @@
+from pathlib import Path
+import casadi as ca
+
 import numpy as np
+from typing import Optional
 from abc import ABC
 from acados_template import AcadosOcp, AcadosOcpSolver
 
@@ -18,14 +22,25 @@ class MPC(ABC):
     ocp_solver: AcadosOcpSolver
     ocp_sensitivity_solver: AcadosOcpSolver
 
-    def __init__(self, gamma: float = 1.0, **kwargs):
+    def __init__(
+        self,
+        gamma: float = 1.0,
+    ):
         super().__init__()
 
         self.discount_factor = gamma
 
     @property
+    def export_directory(self) -> Path:
+        return Path(self.ocp_solver.acados_ocp.code_export_directory)
+
+    @property
     def N(self) -> int:
-        return self.ocp_solver.acados_ocp.dims.N
+        return self.ocp_solver.acados_ocp.dims.N  # type: ignore
+
+    @property
+    def default_param(self) -> np.ndarray:
+        return self.ocp.parameter_values
 
     def get_action(self, x0: np.ndarray) -> np.ndarray:
         """
@@ -52,9 +67,13 @@ class MPC(ABC):
 
         return action
 
-    def solve(self, store_iterate: bool = True, iterate_file: str = "iterate.json") -> int:
+    def solve(
+        self, store_iterate: bool = True, iterate_file: str = "iterate.json"
+    ) -> int:
         self.ocp_solver.solve()
-        self.ocp_solver.store_iterate(filename=iterate_file, overwrite=True, verbose=False)
+        self.ocp_solver.store_iterate(
+            filename=iterate_file, overwrite=True, verbose=False
+        )
         # self.ocp_sensitivity_solver.load_iterate(filename=iterate_file, verbose=False)
         # self.ocp_sensitivity_solver.solve()
 
@@ -81,8 +100,12 @@ class MPC(ABC):
         optimal_value, optimal_value_gradient = self.v_update(x0, p)
 
         # Change bounds back to original
-        self.ocp_solver.constraints_set(0, "lbu", self.ocp_solver.acados_ocp.constraints.lbu)
-        self.ocp_solver.constraints_set(0, "ubu", self.ocp_solver.acados_ocp.constraints.ubu)
+        self.ocp_solver.constraints_set(
+            0, "lbu", self.ocp_solver.acados_ocp.constraints.lbu
+        )
+        self.ocp_solver.constraints_set(
+            0, "ubu", self.ocp_solver.acados_ocp.constraints.ubu
+        )
 
         return optimal_value, optimal_value_gradient
 
@@ -104,13 +127,21 @@ class MPC(ABC):
         if status != 0:
             raise RuntimeError(f"Solver failed with status {status}. Exiting.")
 
-        optimal_value_gradient = self.ocp_solver.eval_and_get_optimal_value_gradient(with_respect_to="params_global")
+        optimal_value_gradient = self.ocp_solver.eval_and_get_optimal_value_gradient(
+            with_respect_to="params_global"
+        )
 
         return optimal_value, optimal_value_gradient
 
-    def pi_update(self, x0: np.ndarray,
-                  initialization: dict[str, np.ndarray] | None = None,
-                  return_dudx: bool = False) -> tuple[np.ndarray, np.ndarray, int] | tuple[np.ndarray, np.ndarray, int, np.ndarray]:
+    def pi_update(
+        self,
+        x0: np.ndarray,
+        initialization: dict[str, np.ndarray] | None = None,
+        return_dudx: bool = False,
+    ) -> (
+        tuple[np.ndarray, np.ndarray, int]
+        | tuple[np.ndarray, np.ndarray, int, np.ndarray]
+    ):
         """Solves the OCP for the initial state x0 and parameters p
         and returns the first action of the horizon, as well as
         the sensitivity of said action with respect to the parameters
@@ -125,20 +156,30 @@ class MPC(ABC):
             self.initialize(initialization)
 
         # Solve the optimization problem for initial state x0
-        pi = self.ocp_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=True)
+        pi = self.ocp_solver.solve_for_x0(
+            x0, fail_on_nonzero_status=False, print_stats_on_failure=True
+        )
         status = self.ocp_solver.get_status()
 
-        self.ocp_solver.store_iterate(filename="iterate.json", overwrite=True, verbose=False)
+        self.ocp_solver.store_iterate(
+            filename="iterate.json", overwrite=True, verbose=False
+        )
         self.ocp_sensitivity_solver.load_iterate(filename="iterate.json", verbose=False)
-        self.ocp_sensitivity_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=False)
+        self.ocp_sensitivity_solver.solve_for_x0(
+            x0, fail_on_nonzero_status=False, print_stats_on_failure=False
+        )
 
         # Calculate the policy gradient
-        _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "params_global")
+        _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(
+            0, "params_global"
+        )
 
         if not return_dudx:
             return pi, dpidp, status
         else:
-            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "initial_state")
+            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(
+                0, "initial_state"
+            )
             return pi, dpidp, status, dpidx
 
     def initialize(self, initialization: dict[str, np.ndarray]):
@@ -154,7 +195,9 @@ class MPC(ABC):
                     self.ocp_solver.set(stage, field, val_trajectory[stage])
                     self.ocp_sensitivity_solver.set(stage, field, val_trajectory[stage])
             elif field == "u":
-                for stage in range(self.N):  # Setting u is not possible in the terminal stage.
+                for stage in range(
+                    self.N
+                ):  # Setting u is not possible in the terminal stage.
                     self.ocp_solver.set(stage, field, val_trajectory[stage])
                     self.ocp_sensitivity_solver.set(stage, field, val_trajectory[stage])
             else:
@@ -340,31 +383,31 @@ class MPC(ABC):
     def get(self, stage, field):
         return self.ocp_solver.get(stage, field)
 
-    def scale_action(self, action: np.ndarray) -> np.ndarray:
-        """
-        Rescale the action from [low, high] to[-1, 1]
-        (no need for symmetric action space)
+    # def scale_action(self, action: np.ndarray) -> np.ndarray:
+    #     """
+    #     Rescale the action from [low, high] to[-1, 1]
+    #     (no need for symmetric action space)
 
-        : param action: Action to scale
-        : return: Scaled action
-        """
-        low = self.ocp.constraints.lbu
-        high = self.ocp.constraints.ubu
+    #     : param action: Action to scale
+    #     : return: Scaled action
+    #     """
+    #     low = self.ocp.constraints.lbu
+    #     high = self.ocp.constraints.ubu
 
-        return 2.0 * ((action - low) / (high - low)) - 1.0
+    #     return 2.0 * ((action - low) / (high - low)) - 1.0
 
-    def unscale_action(self, action: np.ndarray) -> np.ndarray:
-        """
-        Rescale the action from [-1, 1] to[low, high]
-        (no need for symmetric action space)
+    # def unscale_action(self, action: np.ndarray) -> np.ndarray:
+    #     """
+    #     Rescale the action from [-1, 1] to[low, high]
+    #     (no need for symmetric action space)
 
-        : param action: Action to scale
-        : return: Scaled action
-        """
-        low = self.ocp_solver.acados_ocp.constraints.lbu
-        high = self.ocp_solver.acados_ocp.constraints.ubu
+    #     : param action: Action to scale
+    #     : return: Scaled action
+    #     """
+    #     low = self.ocp_solver.acados_ocp.constraints.lbu
+    #     high = self.ocp_solver.acados_ocp.constraints.ubu
 
-        return 0.5 * (high - low) * (action + 1.0) + low
+    #     return 0.5 * (high - low) * (action + 1.0) + low
 
     def get_dL_dp(self) -> np.ndarray:
         """
@@ -413,3 +456,66 @@ class MPC(ABC):
         self.ocp_solver.store_iterate(filename=filename, overwrite=True, verbose=False)
 
         # TODO: Implement this using ocp_sensitivity_solver
+
+    def stage_cons(
+        self, x: np.ndarray, u: np.ndarray, p: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        """
+        Get the value of the stage constraints.
+
+        Returns:
+            stage_cons: Stage constraints.
+        """
+
+        def relu(value):
+            return value * (value > 0)
+
+        cons = {}
+        # state constraints
+        if self.ocp.constraints.lbx is not None:
+            cons["lbx"] = relu(self.ocp.constraints.lbx - x)
+        if self.ocp.constraints.ubx is not None:
+            cons["ubx"] = relu(x - self.ocp.constraints.ubx)
+        # control constraints
+        if self.ocp.constraints.lbu is not None:
+            cons["lbu"] = relu(self.ocp.constraints.lbu - u)
+        if self.ocp.constraints.ubu is not None:
+            cons["ubu"] = relu(u - self.ocp.constraints.ubu)
+
+        # h constraints
+        if self.ocp.model.con_h_expr is not None:
+            if self._h_fn is None:
+                inputs = [self.ocp.model.x, self.ocp.model.u]
+
+                if self.ocp.model.p is not None:
+                    inputs.append(self.ocp.model.p)  # type: ignore
+
+                import pdb; pdb.set_trace()
+                self._h_fn = ca.Function("h", inputs, [self.ocp.model.con_h_expr])
+
+            inputs = [x, u]
+            if self.ocp.model.p:
+                # Todo (Jasper): Param update.
+                # p = self.fetch_params(mpc_input, stage=0)
+                inputs.append(p)  # type: ignore
+
+            h = self._h_fn(*inputs)
+            cons["lh"] = relu(self.ocp.constraints.lh - h)
+            cons["uh"] = relu(h - self.ocp.constraints.uh)
+
+        # Todo (Jasper): Add phi constraints.
+
+        return cons
+
+    def stage_cost(
+        self, x: np.ndarray, u: np.ndarray, p: np.ndarray,
+    ) -> dict[str, np.ndarray]:
+        """
+        Get the value of the stage cost.
+
+        Returns:
+            stage_cost: Stage cost.
+        """
+
+        raise NotImplementedError
+

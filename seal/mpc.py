@@ -6,6 +6,8 @@ from typing import Optional
 from abc import ABC
 from acados_template import AcadosOcp, AcadosOcpSolver
 
+from typing import Callable
+
 
 def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
     for stage in range(0, ocp_solver.acados_ocp.dims.N + 1):
@@ -22,13 +24,26 @@ class MPC(ABC):
     ocp_solver: AcadosOcpSolver
     ocp_sensitivity_solver: AcadosOcpSolver
 
-    def __init__(
-        self,
-        gamma: float = 1.0,
-    ):
+    def __init__(self,
+                 ocp_solver_constructor: Callable[..., AcadosOcpSolver],
+                 ocp_sensitivity_solver_constructor: Callable[..., AcadosOcpSolver],
+                 ocp_solver_constructor_kwargs: dict,
+                 ocp_sensitivity_solver_constructor_kwargs: dict,
+                 discount_factor: float = 1.,
+                 **kwargs):
+        """
+        Parameters:
+            ocp_solver_constructor: A constructor that takes in the ocp_solver_constructor_kwargs and returns the main ocp_solver. NEEDS TO PASS THE KEYS "generate" and "build" to the original constructor of the AcadosOcpSolver. 
+            ocp_sensitivity_solver_constructor: A constructor that takes in the ocp_solver_constructor_kwargs and returns the ocp_solver that loads the solution of the main ocp_solver and uses it to calculate the sensitivities. NEEDS TO PASS THE KEYS "generate" and "build" to the original constructor of the AcadosOcpSolver.
+            ocp_solver_constructor_kwargs: The kwargs that are passed to the respective constructor. 
+            ocp_sensitivity_solver_constructor_kwargs: The kwargs that are passed to the respective constructor.
+        """
         super().__init__()
 
-        self.discount_factor = gamma
+        self.ocp_solver = ocp_solver_constructor(**ocp_solver_constructor_kwargs)
+        self.ocp_sensitivity_solver = ocp_sensitivity_solver_constructor(**ocp_sensitivity_solver_constructor_kwargs)
+
+        self.set_discount_factor(discount_factor)
 
     @property
     def export_directory(self) -> Path:
@@ -133,15 +148,10 @@ class MPC(ABC):
 
         return optimal_value, optimal_value_gradient
 
-    def pi_update(
-        self,
-        x0: np.ndarray,
-        initialization: dict[str, np.ndarray] | None = None,
-        return_dudx: bool = False,
-    ) -> (
-        tuple[np.ndarray, np.ndarray, int]
-        | tuple[np.ndarray, np.ndarray, int, np.ndarray]
-    ):
+    def pi_update(self, x0: np.ndarray,
+                  initialization: dict[str, np.ndarray] | None = None,
+                  return_dudp: bool = True,
+                  return_dudx: bool = False) -> tuple[np.ndarray, int, tuple[np.ndarray | None, np.ndarray | None]]:
         """Solves the OCP for the initial state x0 and parameters p
         and returns the first action of the horizon, as well as
         the sensitivity of said action with respect to the parameters
@@ -150,7 +160,13 @@ class MPC(ABC):
         Parameters:
             x0: Initial state.
             initialization: A map from the strings of fields (as in AcadosOcpSolver.set()) that should be initialized, to an np array which contains the values for those fields, being of shape (stages_of_that_field, field_dim).
-            return_dudx: Whether to also return the sensitivity of the action with respect to the state.
+            return_dudp: Whether to return the sensitivity of the action with respect to the parameters.
+            return_dudx: Whether to return the sensitivity of the action with respect to the state.
+        Returns:
+        A tuple containing in order:
+            u: The first action of the (solution) horizon.
+            status: The acados status of the solve.
+            sensitivities: A tuple with two entries, containing du/dp in the first entry (or None if not requested) and du/dx in the second entry (or None if not requested). 
         """
         if initialization is not None:
             self.initialize(initialization)
@@ -170,17 +186,16 @@ class MPC(ABC):
         )
 
         # Calculate the policy gradient
-        _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(
-            0, "params_global"
-        )
-
-        if not return_dudx:
-            return pi, dpidp, status
+        if return_dudp:
+            _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "params_global")
         else:
-            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(
-                0, "initial_state"
-            )
-            return pi, dpidp, status, dpidx
+            dpidp = None
+        if return_dudx:
+            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "initial_state")
+        else:
+            dpidx = None
+
+        return pi, status, (dpidp, dpidx)
 
     def initialize(self, initialization: dict[str, np.ndarray]):
         """Initializes the fields of the OCP solver with the given values.

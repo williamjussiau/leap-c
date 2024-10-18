@@ -7,7 +7,6 @@ from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSimSolver
 from .autograd import AutogradCasadiFunction, DynamicsSimFunction, MPCSolutionFunction
 
 from seal.mpc import MPC
-from seal.util import tensor_to_numpy
 
 
 class CasadiExprModule(nn.Module):
@@ -43,7 +42,10 @@ class MPCSolutionModule(nn.Module):
     """A pytorch module to represent the implicit policy given by an MPC controller,
     i.e., the first action of the MPC solution.
     Backpropagation works through using the sensitivities of this action with respect to
-    the initial state or the parameters of the MPC.
+    the initial state or the parameters of the MPC. Currently only supporting parameters that are global over the horizon
+    (contrary to stagewise parameters).
+
+        NOTE: This is uses an mpc for every sample in a batch, so it is not efficient for large batch sizes.
 
         NOTE: Make sure that you follow the documentation of AcadosOcpSolver.eval_solution_sensitivity,
         or else the gradients used in the backpropagation might be erroneous! In particular,

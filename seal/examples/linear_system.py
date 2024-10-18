@@ -2,8 +2,10 @@
 linear system
 """
 
+import datetime as d
 import numpy as np
 import casadi as cs
+from multiprocessing import current_process
 from scipy import linalg
 from scipy.linalg import solve_discrete_are
 from acados_template import AcadosOcp, AcadosOcpSolver
@@ -11,14 +13,14 @@ from seal.mpc import MPC
 
 
 class LinearSystemMPC(MPC):
-    """docstring for MPC."""
+    """TODO: docstring for MPC."""
 
     ocp: AcadosOcp
     ocp_solver: AcadosOcpSolver
     ocp_sensitivity_solver: AcadosOcpSolver
 
-    def __init__(self, param, discount_factor=0.99, **kwargs):
-        super(LinearSystemMPC, self).__init__()
+    def __init__(self, param: dict, discount_factor: float = 0.99,
+                 **kwargs):
 
         ocp_solver_kwargs = kwargs["ocp_solver"] if "ocp_solver" in kwargs else {}
 
@@ -26,8 +28,15 @@ class LinearSystemMPC(MPC):
 
         self.ocp = export_parametric_ocp(param)
 
-        self.ocp_solver = setup_ocp_solver(self.ocp, **ocp_solver_kwargs)
-        self.ocp_sensitivity_solver = setup_ocp_sensitivity_solver(self.ocp, **ocp_sensitivity_solver_kwargs)
+        ocp_solver_kwargs["ocp"] = self.ocp
+        ocp_sensitivity_solver_kwargs["ocp"] = self.ocp
+
+        super(LinearSystemMPC, self).__init__(discount_factor=discount_factor,
+                                              ocp_solver_constructor=setup_ocp_solver,
+                                              ocp_sensitivity_solver_constructor=setup_ocp_sensitivity_solver,
+                                              ocp_solver_constructor_kwargs=ocp_solver_kwargs,
+                                              ocp_sensitivity_solver_constructor_kwargs=ocp_sensitivity_solver_kwargs
+                                              )
 
 
 def disc_dyn_expr(x, u, param):

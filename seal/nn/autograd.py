@@ -112,31 +112,32 @@ class MPCSolutionFunction(autograd.Function):
     @staticmethod
     def forward(ctx, mpc: MPC, x0: torch.Tensor, p: torch.Tensor,
                 initializations: list[dict[str, np.ndarray]] | None) -> torch.Tensor:
-        assert initializations is None or "p" not in initializations.keys(), "p should be passed explicitly as argument here"
         device = x0.device
         dtype = x0.dtype
         batch_size = x0.shape[0]
-        assert initializations is None or len(initializations) == batch_size
         xdim = x0.shape[1]
         pdim = p.shape[1]
         udim = mpc.ocp.dims.nu
 
+        need_dudx = ctx.needs_input_grad[1]
+        need_dudp = ctx.needs_input_grad[2]
+
         x0 = tensor_to_numpy(x0)
         p = tensor_to_numpy(p)
-        if initializations is not None:
-            for i, sample_init in initializations:
-                sample_init["p"] = p[i, :]
-        else:
-            initializations = [{"p": p[i, :]} for i in range(batch_size)]
+        initializations = integrate_p_into_initialization(p, initializations, stages=mpc.N+1)
 
         u = np.zeros((batch_size, udim))
-        dudp = np.zeros((batch_size, udim, pdim))
-        dudx = np.zeros((batch_size, udim, xdim))
+        dudp = np.zeros((batch_size, udim, pdim)) if need_dudp else None
+        dudx = np.zeros((batch_size, udim, xdim)) if need_dudx else None
         status = np.zeros(batch_size, dtype=np.int8)
 
         for i in range(batch_size):
-            u[i, :], dudp[i, :, :], status[i], dudx[i, :, :] = mpc.pi_update(
-                x0=x0[i, :], initialization=initializations[i], return_dudx=True)
+            u[i, :], status[i], sens = mpc.pi_update(
+                x0=x0[i, :], initialization=initializations[i], return_dudp=need_dudp, return_dudx=need_dudx)
+            if need_dudp:
+                dudp[i, :, :] = sens[0]
+            if need_dudx:
+                dudx[i, :, :] = sens[1]
 
         ctx.dudp = dudp
         ctx.dudx = dudx
@@ -148,8 +149,8 @@ class MPCSolutionFunction(autograd.Function):
 
         return u, status
 
-    @staticmethod
-    @autograd.function.once_differentiable
+    @ staticmethod
+    @ autograd.function.once_differentiable
     def backward(ctx, *grad_outputs):
 
         dLdu, _ = grad_outputs
@@ -157,10 +158,46 @@ class MPCSolutionFunction(autograd.Function):
         device = dLdu.device
         dtype = dLdu.dtype
 
-        dudx = torch.tensor(ctx.dudx, device=device, dtype=dtype)
-        dudp = torch.tensor(ctx.dudp, device=device, dtype=dtype)
+        need_dudx = ctx.needs_input_grad[1]
+        need_dudp = ctx.needs_input_grad[2]
 
-        grad_x = torch.einsum("bkj,bk->bj", dudx, dLdu)
-        grad_p = torch.einsum("bkj,bk->bj", dudp, dLdu)
+        if need_dudx:
+            dudx = ctx.dudx
+            if dudx is None:
+                raise ValueError(
+                    "ctx.needs_input_grad wrt. x was not True in forward pass, it is not working as we expected.")
+            dudx = torch.tensor(dudx, device=device, dtype=dtype)
+            grad_x = torch.einsum("bkj,bk->bj", dudx, dLdu)
+        else:
+            grad_x = None
+
+        if need_dudp:
+            dudp = ctx.dudp
+            if dudp is None:
+                raise ValueError(
+                    "ctx.needs_input_grad wrt. p was not True in forward pass, it is not working as we expected.")
+            dudp = torch.tensor(dudp, device=device, dtype=dtype)
+            grad_p = torch.einsum("bkj,bk->bj", dudp, dLdu)
+        else:
+            grad_p = None
 
         return (None, grad_x, grad_p, None, None)
+
+
+def integrate_p_into_initialization(p: np.ndarray,
+                                    initializations: list[dict[str, np.ndarray]] | None,
+                                    stages: int) -> list[dict[str, np.ndarray]]:
+    """NOTE: If initializations is not None, it will be modified.
+    """
+    batch_size = p.shape[0]
+    if initializations is not None and len(initializations) != batch_size:
+        raise ValueError("initializations must be a list of dictionaries with length equal to the batch size.")
+
+    if initializations is not None:
+        if "p" in initializations[0].keys():
+            raise ValueError("p in initialization would be overwritten!")
+        for i, sample_init in initializations:
+            sample_init["p"] = np.broadcast_to(p[i, :], shape=(stages, 12))
+    else:
+        initializations = [{"p": np.broadcast_to(p[i, :], shape=(stages, 12))} for i in range(batch_size)]
+    return initializations

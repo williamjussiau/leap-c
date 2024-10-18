@@ -97,9 +97,6 @@ def evaluate_policy(
             for key, value in info.items():
                 episode_stats[key].append(value)
 
-            import pdb
-
-            pdb.set_trace()
 
         final_stats = {}
 

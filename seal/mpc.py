@@ -1,10 +1,13 @@
-from pathlib import Path
-import casadi as ca
-
-import numpy as np
-from typing import Optional
 from abc import ABC
+import atexit
+from pathlib import Path
+import shutil
+
+
 from acados_template import AcadosOcp, AcadosOcpSolver
+import casadi as ca
+import numpy as np
+from tempfile import mkdtemp
 
 from typing import Callable
 
@@ -19,35 +22,54 @@ class MPC(ABC):
     MPC abstract base class.
     """
 
-    ocp: AcadosOcp
-    # nlp: NLP
-    ocp_solver: AcadosOcpSolver
-    ocp_sensitivity_solver: AcadosOcpSolver
-
-    def __init__(self,
-                 ocp_solver_constructor: Callable[..., AcadosOcpSolver],
-                 ocp_sensitivity_solver_constructor: Callable[..., AcadosOcpSolver],
-                 ocp_solver_constructor_kwargs: dict,
-                 ocp_sensitivity_solver_constructor_kwargs: dict,
-                 discount_factor: float = 1.,
-                 **kwargs):
+    def __init__(
+        self,
+        ocp: AcadosOcp,
+        ocp_sensitivity: AcadosOcp,
+        gamma: float = 1.0,
+        export_directory: Path | None = None,
+        cleanup: bool = True,
+    ):
         """
-        Parameters:
-            ocp_solver_constructor: A constructor that takes in the ocp_solver_constructor_kwargs and returns the main ocp_solver. NEEDS TO PASS THE KEYS "generate" and "build" to the original constructor of the AcadosOcpSolver. 
-            ocp_sensitivity_solver_constructor: A constructor that takes in the ocp_solver_constructor_kwargs and returns the ocp_solver that loads the solution of the main ocp_solver and uses it to calculate the sensitivities. NEEDS TO PASS THE KEYS "generate" and "build" to the original constructor of the AcadosOcpSolver.
-            ocp_solver_constructor_kwargs: The kwargs that are passed to the respective constructor. 
-            ocp_sensitivity_solver_constructor_kwargs: The kwargs that are passed to the respective constructor.
+        Initialize the MPC object.
+
+        Args:
+            ocp: Optimal control problem.
+            ocp_sensitivity: Optimal control problem to derive the sensitvities.
+            gamma: Discount factor.
+            export_directory: Directory to export the generated code.
+            cleanup: Whether to clean up the export directory on exit or
+                when the object is deleted.
         """
-        super().__init__()
 
-        self.ocp_solver = ocp_solver_constructor(**ocp_solver_constructor_kwargs)
-        self.ocp_sensitivity_solver = ocp_sensitivity_solver_constructor(**ocp_sensitivity_solver_constructor_kwargs)
+        self.ocp = ocp
+        self.ocp_sensitivity = ocp_sensitivity
+        self.discount_factor = gamma
 
-        self.set_discount_factor(discount_factor)
 
-    @property
-    def export_directory(self) -> Path:
-        return Path(self.ocp_solver.acados_ocp.code_export_directory)
+        # path management
+        self.cleanup = cleanup
+        self.export_directory = (
+            export_directory if export_directory is not None else Path(mkdtemp())
+        )
+
+        self.ocp.json_file = str(self.export_directory / "acados_ocp.json")
+        self.ocp_sensitivity.json_file = str(
+            self.export_directory / "acados_ocp_sensitivity.json"
+        )
+
+        self.ocp.code_export_directory = str(self.export_directory / "c_generated_code")
+        self.ocp_sensitivity.code_export_directory = str(
+            self.export_directory / "c_generated_code_sensitivity"
+        )
+
+        # register cleanup
+        if cleanup:
+            atexit.register(shutil.rmtree, self.export_directory, ignore_errors=True)
+
+        # create solvers
+        self.ocp_solver = AcadosOcpSolver(ocp)
+        self.ocp_sensitivity_solver = AcadosOcpSolver(ocp_sensitivity)
 
     @property
     def N(self) -> int:
@@ -473,7 +495,10 @@ class MPC(ABC):
         # TODO: Implement this using ocp_sensitivity_solver
 
     def stage_cons(
-        self, x: np.ndarray, u: np.ndarray, p: np.ndarray,
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        p: np.ndarray,
     ) -> dict[str, np.ndarray]:
         """
         Get the value of the stage constraints.
@@ -505,7 +530,6 @@ class MPC(ABC):
                 if self.ocp.model.p is not None:
                     inputs.append(self.ocp.model.p)  # type: ignore
 
-                import pdb; pdb.set_trace()
                 self._h_fn = ca.Function("h", inputs, [self.ocp.model.con_h_expr])
 
             inputs = [x, u]
@@ -523,7 +547,10 @@ class MPC(ABC):
         return cons
 
     def stage_cost(
-        self, x: np.ndarray, u: np.ndarray, p: np.ndarray,
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        p: np.ndarray,
     ) -> dict[str, np.ndarray]:
         """
         Get the value of the stage cost.
@@ -534,3 +561,6 @@ class MPC(ABC):
 
         raise NotImplementedError
 
+    def __del__(self):
+        if self.cleanup:
+            shutil.rmtree(self.export_directory)

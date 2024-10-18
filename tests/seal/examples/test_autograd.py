@@ -22,6 +22,7 @@ def test_MPCSolutionModule_on_LinearSystemMPC(generate_code: bool = False,
     x0 = torch.tile(x0, (batch_size, 1))
     p = torch.tensor(test_param, dtype=torch.float64)
 
+
     x0.requires_grad = True
     p.requires_grad = True
 

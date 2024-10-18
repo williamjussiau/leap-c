@@ -2,41 +2,37 @@
 linear system
 """
 
+from copy import deepcopy
 import datetime as d
 import numpy as np
 import casadi as cs
 from multiprocessing import current_process
 from scipy import linalg
 from scipy.linalg import solve_discrete_are
-from acados_template import AcadosOcp, AcadosOcpSolver
+from acados_template import AcadosOcp
 from seal.mpc import MPC
 
 
 class LinearSystemMPC(MPC):
-    """TODO: docstring for MPC."""
+    def __init__(self, param: dict[str, np.ndarray] | None = None, gamma: float = 0.99):
+        if param is None:
+            param = {
+                "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
+                "B": np.array([[0.03125], [0.25]]),
+                "Q": np.identity(2),
+                "R": np.identity(1),
+                "b": np.array([[0.0], [0.0]]),
+                "f": np.array([[0.0], [0.0], [0.0]]),
+                "V_0": np.array([1e-3]),
+            }
 
-    ocp: AcadosOcp
-    ocp_solver: AcadosOcpSolver
-    ocp_sensitivity_solver: AcadosOcpSolver
+        ocp = export_parametric_ocp(param)
+        ocp_sensitivity = deepcopy(ocp)
 
-    def __init__(self, param: dict, discount_factor: float = 0.99,
-                 **kwargs):
+        configure_ocp_solver(ocp)
+        configure_ocp_sensitivity_solver(ocp_sensitivity)
 
-        ocp_solver_kwargs = kwargs["ocp_solver"] if "ocp_solver" in kwargs else {}
-
-        ocp_sensitivity_solver_kwargs = kwargs["ocp_sensitivity_solver"] if "ocp_sensitivity_solver" in kwargs else {}
-
-        self.ocp = export_parametric_ocp(param)
-
-        ocp_solver_kwargs["ocp"] = self.ocp
-        ocp_sensitivity_solver_kwargs["ocp"] = self.ocp
-
-        super(LinearSystemMPC, self).__init__(discount_factor=discount_factor,
-                                              ocp_solver_constructor=setup_ocp_solver,
-                                              ocp_sensitivity_solver_constructor=setup_ocp_sensitivity_solver,
-                                              ocp_solver_constructor_kwargs=ocp_solver_kwargs,
-                                              ocp_sensitivity_solver_constructor_kwargs=ocp_sensitivity_solver_kwargs
-                                              )
+        super().__init__(ocp, ocp_sensitivity, gamma)
 
 
 def disc_dyn_expr(x, u, param):
@@ -67,7 +63,9 @@ def cost_expr_ext_cost_e(x, param, N):
     equation.
     """
 
-    return 0.5 * cs.mtimes([x.T, solve_discrete_are(param["A"], param["B"], param["Q"], param["R"]), x])
+    return 0.5 * cs.mtimes(
+        [x.T, solve_discrete_are(param["A"], param["B"], param["Q"], param["R"]), x]
+    )
 
 
 def get_parameter(field, p) -> cs.DM:
@@ -83,64 +81,39 @@ def get_parameter(field, p) -> cs.DM:
         return cs.reshape(p[9:12], 3, 1)
 
 
-def setup_ocp_solver(
+def configure_ocp_solver(
     ocp: AcadosOcp,
-    qp_solver: str = "PARTIAL_CONDENSING_HPIPM",
-    hessian_approx: str = "EXACT",
-    integrator_type: str = "DISCRETE",
-    nlp_solver_type: str = "SQP",
-    qp_solver_ric_alg: int = 1,
-    **kwargs,
-) -> AcadosOcpSolver:
+):
     ocp.solver_options.tf = ocp.dims.N
-    ocp.solver_options.integrator_type = integrator_type
-    ocp.solver_options.nlp_solver_type = nlp_solver_type
-    ocp.solver_options.hessian_approx = hessian_approx
-    ocp.solver_options.qp_solver = qp_solver
-    ocp.solver_options.qp_solver_ric_alg = qp_solver_ric_alg
+    ocp.solver_options.integrator_type = "DISCRETE"
+    ocp.solver_options.nlp_solver_type = "SQP"
+    ocp.solver_options.hessian_approx = "EXACT"
+    ocp.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
+    ocp.solver_options.qp_solver_ric_alg = 1
     ocp.solver_options.with_value_sens_wrt_params = True
     ocp.solver_options.with_solution_sens_wrt_params = True
 
-    ocp_solver = AcadosOcpSolver(ocp, **kwargs)
-
     # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
-    for stage in range(ocp_solver.acados_ocp.dims.N + 1):
-        ocp_solver.set(stage, "p", ocp_solver.acados_ocp.parameter_values)
-
-    return ocp_solver
 
 
-def setup_ocp_sensitivity_solver(
+def configure_ocp_sensitivity_solver(
     ocp: AcadosOcp,
-    qp_solver: str = "PARTIAL_CONDENSING_HPIPM",
-    integrator_type: str = "DISCRETE",
-    nlp_solver_type: str = "SQP",
-    hessian_approx: str = "EXACT",
-    **kwargs,
-) -> AcadosOcpSolver:
+):
     ocp.model.name = f"{ocp.model.name}_sensitivity"
 
     ocp.solver_options.tf = ocp.dims.N
-    ocp.solver_options.nlp_solver_type = nlp_solver_type
+    ocp.solver_options.nlp_solver_type = "SQP"
     ocp.solver_options.nlp_solver_step_length = 0.0
     ocp.solver_options.nlp_solver_max_iter = 1
     ocp.solver_options.qp_solver_iter_max = 200
     ocp.solver_options.tol = 1e-10
-    ocp.solver_options.integrator_type = integrator_type
-    ocp.solver_options.qp_solver = qp_solver
+    ocp.solver_options.integrator_type = "DISCRETE"
+    ocp.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
     ocp.solver_options.qp_solver_ric_alg = 1
     ocp.solver_options.qp_solver_cond_N = ocp.dims.N
-    ocp.solver_options.hessian_approx = hessian_approx
+    ocp.solver_options.hessian_approx = "EXACT"
     ocp.solver_options.with_solution_sens_wrt_params = True
     ocp.solver_options.with_value_sens_wrt_params = True
-
-    ocp_solver = AcadosOcpSolver(ocp, **kwargs)
-
-    # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
-    for stage in range(ocp_solver.acados_ocp.dims.N + 1):
-        ocp_solver.set(stage, "p", ocp_solver.acados_ocp.parameter_values)
-
-    return ocp_solver
 
 
 def export_parametric_ocp(
@@ -190,7 +163,9 @@ def export_parametric_ocp(
         cs.reshape(f, -1, 1),
     )
 
-    ocp.parameter_values = np.concatenate([param[key].T.reshape(-1, 1) for key in ["A", "B", "b", "V_0", "f"]])
+    ocp.parameter_values = np.concatenate(
+        [param[key].T.reshape(-1, 1) for key in ["A", "B", "b", "V_0", "f"]]
+    )
 
     ocp.model.disc_dyn_expr = A @ ocp.model.x + B @ ocp.model.u + b
 
@@ -217,13 +192,19 @@ def export_parametric_ocp(
 
     elif cost_type == "EXTERNAL":
         ocp.cost.cost_type_0 = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost_0 = cost_expr_ext_cost_0(ocp.model.x, ocp.model.u, ocp.model.p)
+        ocp.model.cost_expr_ext_cost_0 = cost_expr_ext_cost_0(
+            ocp.model.x, ocp.model.u, ocp.model.p
+        )
 
         ocp.cost.cost_type = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(ocp.model.x, ocp.model.u, ocp.model.p)
+        ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(
+            ocp.model.x, ocp.model.u, ocp.model.p
+        )
 
         ocp.cost.cost_type_e = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(ocp.model.x, param, ocp.dims.N)
+        ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(
+            ocp.model.x, param, ocp.dims.N
+        )
 
     ocp.constraints.idxbx_0 = np.array([0, 1])
     ocp.constraints.lbx_0 = np.array([-1.0, -1.0])

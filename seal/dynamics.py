@@ -1,64 +1,54 @@
-import numpy as np
 from abc import ABC, abstractmethod
-
+from copy import deepcopy
+from functools import partial
 from pathlib import Path
+
 from acados_template import (
     AcadosOcp,
+    AcadosSimOptions,
     AcadosSim,
-    AcadosSimOpts,
     AcadosSimSolver,
-    AcadosOcpOptions,
 )
 import casadi as ca
+import numpy as np
 
 from seal.mpc import MPC
+from seal.util import AcadosFileManager
 
 
 def create_dynamics_from_mpc(
-    mpc: MPC, export_dir, sens_forw=False, dt=None
+    mpc: MPC, export_dir: None | Path = None, sens_forw=False, dt=None
 ) -> "Dynamics":
     """Create a dynamics object from an MPC object."""
     ocp: AcadosOcp = mpc.ocp
 
     # if there is a discrete dynamics function, use it
     if ocp.model.disc_dyn_expr is not None:
-        ca_dyn_fn = ocp.model.disc_dyn_expr
-        ca_dyn_fn = ca.Function(
-            "disc_dyn",
-            [ocp.model.x, ocp.model.u, ocp.model.p],
-            [ca_dyn_fn],
-            ["x", "u", "p"],
-            ["x_next"],
-        )
-        return CasadiDynamics(ca_dyn_fn)
+        inputs = [ocp.model.x, ocp.model.u]
+        if ocp.model.p is not None:
+            inputs.append(ocp.model.p)
+
+        expr = ocp.model.disc_dyn_expr
+
+        return CasadiDynamics(expr, inputs)
 
     # otherwise we create a AcadosSim object
     assert ocp.model.f_expl_expr is not None
 
     # create sim opts
-    ocp_opts = AcadosOcpOptions()
-    sim_opts = AcadosSimOpts()
+    sim_opts = AcadosSimOptions()
 
     # assert sim_method_num_stages all equal
-    if isinstance(ocp_opts.sim_method_num_stages, np.ndarray):
-        assert len(set(ocp_opts.sim_method_num_stages)) == 1
-        sim_opts.num_stages = int(ocp_opts.sim_method_num_stages[0])
-    else:
-        sim_opts.num_stages = ocp_opts.sim_method_num_stages
-    if isinstance(ocp_opts.sim_method_num_steps, np.ndarray):
-        assert len(set(ocp_opts.sim_method_num_steps)) == 1
-        sim_opts.num_steps = int(ocp_opts.sim_method_num_steps[0])
-    else:
-        sim_opts.num_steps = ocp_opts.sim_method_num_steps
-    sim_opts.newton_iter = ocp_opts.sim_method_newton_iter
-    sim_opts.integrator_type = ocp_opts.integrator_type
+    # does this makes sense?
+    sim_opts.num_steps = ocp.solver_options.sim_method_num_steps
+    sim_opts.newton_iter = ocp.solver_options.sim_method_newton_iter
+    sim_opts.integrator_type = ocp.solver_options.integrator_type
 
     # create sim
     sim = AcadosSim()
     sim.solver_options = sim_opts
     sim.solver_options.sens_forw = sens_forw
-    sim.code_export_directory = str(export_dir.absolute())
-    sim.model = ocp.model
+    sim.model = deepcopy(ocp.model)
     sim.parameter_values = ocp.parameter_values
 
     if dt is None:
@@ -66,7 +56,7 @@ def create_dynamics_from_mpc(
 
     sim.solver_options.T = dt
 
-    return SimDynamics(sim)
+    return SimDynamics(sim, export_dir=export_dir)
 
 
 class Dynamics(ABC):
@@ -93,15 +83,25 @@ class Dynamics(ABC):
 
 
 class SimDynamics(Dynamics):
-    def __init__(self, sim: AcadosSim):
+    def __init__(
+        self, sim: AcadosSim, export_dir: Path | None = None, cleanup: bool = True
+    ):
         self.sim = sim
-        self.sim_solver = None
+        afm = AcadosFileManager(export_dir, cleanup=cleanup)
+        self._sim_solver_fn = partial(afm.setup_acados_sim_solver, sim)
+        self._sim_solver = None
+
+    @property
+    def sim_solver(self) -> AcadosSimSolver:
+        if self._sim_solver is None:
+            self._sim_solver = self._sim_solver_fn()
+        return self._sim_solver
 
     def __call__(
         self,
         x: np.ndarray,
         u: np.ndarray,
-        p: np.ndarray | None,
+        p: np.ndarray | None = None,
         with_sens: bool = False,
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Step the dynamics.
@@ -115,11 +115,6 @@ class SimDynamics(Dynamics):
         Returns:
             The next state and the sensitivity if with_sens is True.
         """
-        if self.sim_solver is None:
-            self.sim_solver = AcadosSimSolver(
-                self.sim, str(Path(self.sim.code_export_directory) / "acados_ocp.json")
-            )
-
         self.sim_solver.set("x", x)
         self.sim_solver.set("u", u)
 
@@ -138,14 +133,25 @@ class SimDynamics(Dynamics):
 
 
 class CasadiDynamics(Dynamics):
-    def __init__(self, ca_dyn_fn: ca.Function):
-        self.ca_dyn_fn = ca_dyn_fn
+    def __init__(self, expr: ca.SX, inputs: list[ca.SX]):
+        self.expr = expr
+        self.inputs = inputs
+
+        self.dyn_fn = ca.Function(
+            "dyn", inputs, [expr], ["x", "u", "p"], ["x_next"]
+        )
+
+        # generate the jacobian
+        inputs_cat = ca.vertcat(*inputs)
+        jac_expr = ca.jacobian(expr, inputs_cat)
+
+        self.jac_fn = ca.Function("jtimes", [inputs_cat], [jac_expr])
 
     def __call__(
         self,
         x: np.ndarray,
         u: np.ndarray,
-        p: np.ndarray | None,
+        p: np.ndarray | None = None,
         with_sens: bool = False,
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Step the dynamics.
@@ -159,13 +165,33 @@ class CasadiDynamics(Dynamics):
         Returns:
             The next state.
         """
+        x_shape = x.shape
 
         inputs = [x, u]
 
         if p is not None:
             inputs.append(p)
 
-        if not with_sens:
-            return self.ca_dyn_fn(*inputs).full()  # type: ignore
+        # transpose inputs to match casadi batch format
+        inputs = [i.T for i in inputs]
 
-        return self.ca_dyn_fn(*inputs).full()  # type: ignore
+        output = self.dyn_fn(*inputs).full().T.reshape(x_shape)  # type: ignore
+
+        if not with_sens:
+            return output
+
+        # compute the jacobian
+        sizes = [i.shape[0] for i in inputs]
+        splits = np.cumsum(sizes)[:-1]
+
+        inputs_cat = np.concatenate(inputs, axis=0)
+
+        jac = self.jac_fn(inputs_cat).full().T  # type: ignore
+        if len(x_shape) > 1:
+            jac = jac.reshape(x_shape[0], -1, x_shape[1])
+            Sx, Su, _ = np.split(jac, splits, axis=1)
+        else:
+            Sx, Su, _ = np.split(jac, splits, axis=0)
+
+        return output, Sx, Su
+

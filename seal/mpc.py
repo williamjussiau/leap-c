@@ -1,15 +1,12 @@
 from abc import ABC
-import atexit
+from functools import partial
 from pathlib import Path
-import shutil
-
 
 from acados_template import AcadosOcp, AcadosOcpSolver
 import casadi as ca
 import numpy as np
-from tempfile import mkdtemp
 
-from typing import Callable
+from seal.util import AcadosFileManager
 
 
 def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
@@ -28,6 +25,7 @@ class MPC(ABC):
         ocp_sensitivity: AcadosOcp,
         gamma: float = 1.0,
         export_directory: Path | None = None,
+        export_directory_sensitivity: Path | None = None,
         cleanup: bool = True,
     ):
         """
@@ -38,6 +36,8 @@ class MPC(ABC):
             ocp_sensitivity: Optimal control problem to derive the sensitvities.
             gamma: Discount factor.
             export_directory: Directory to export the generated code.
+            export_directory_sensitivity: Directory to export the generated
+                code for the sensitivity problem.
             cleanup: Whether to clean up the export directory on exit or
                 when the object is deleted.
         """
@@ -46,30 +46,29 @@ class MPC(ABC):
         self.ocp_sensitivity = ocp_sensitivity
         self.discount_factor = gamma
 
-
         # path management
-        self.cleanup = cleanup
-        self.export_directory = (
-            export_directory if export_directory is not None else Path(mkdtemp())
+        afm = AcadosFileManager(export_directory, cleanup)
+        afm_sens = AcadosFileManager(export_directory_sensitivity, cleanup)
+
+        # setup ocp solvers, we make the creation lazy
+        self._ocp_solver_fn = partial(afm.setup_acados_ocp_solver, ocp)
+        self._ocp_sensitivity_solver_fn = partial(
+            afm_sens.setup_acados_ocp_solver, ocp_sensitivity
         )
+        self._ocp_solver = None
+        self._ocp_sensitivity_solver = None
 
-        self.ocp.json_file = str(self.export_directory / "acados_ocp.json")
-        self.ocp_sensitivity.json_file = str(
-            self.export_directory / "acados_ocp_sensitivity.json"
-        )
+    @property
+    def ocp_solver(self) -> AcadosOcpSolver:
+        if self._ocp_solver is None:
+            self._ocp_solver = self._ocp_solver_fn()
+        return self._ocp_solver
 
-        self.ocp.code_export_directory = str(self.export_directory / "c_generated_code")
-        self.ocp_sensitivity.code_export_directory = str(
-            self.export_directory / "c_generated_code_sensitivity"
-        )
-
-        # register cleanup
-        if cleanup:
-            atexit.register(shutil.rmtree, self.export_directory, ignore_errors=True)
-
-        # create solvers
-        self.ocp_solver = AcadosOcpSolver(ocp)
-        self.ocp_sensitivity_solver = AcadosOcpSolver(ocp_sensitivity)
+    @property
+    def ocp_sensitivity_solver(self) -> AcadosOcpSolver:
+        if self._ocp_sensitivity_solver is None:
+            self._ocp_sensitivity_solver = self._ocp_sensitivity_solver_fn()
+        return self._ocp_sensitivity_solver
 
     @property
     def N(self) -> int:
@@ -77,7 +76,7 @@ class MPC(ABC):
 
     @property
     def default_param(self) -> np.ndarray:
-        return self.ocp.parameter_values
+        return self.ocp.parameter_values[..., 0]
 
     def get_action(self, x0: np.ndarray) -> np.ndarray:
         """
@@ -170,10 +169,13 @@ class MPC(ABC):
 
         return optimal_value, optimal_value_gradient
 
-    def pi_update(self, x0: np.ndarray,
-                  initialization: dict[str, np.ndarray] | None = None,
-                  return_dudp: bool = True,
-                  return_dudx: bool = False) -> tuple[np.ndarray, int, tuple[np.ndarray | None, np.ndarray | None]]:
+    def pi_update(
+        self,
+        x0: np.ndarray,
+        initialization: dict[str, np.ndarray] | None = None,
+        return_dudp: bool = True,
+        return_dudx: bool = False,
+    ) -> tuple[np.ndarray, int, tuple[np.ndarray | None, np.ndarray | None]]:
         """Solves the OCP for the initial state x0 and parameters p
         and returns the first action of the horizon, as well as
         the sensitivity of said action with respect to the parameters
@@ -188,7 +190,7 @@ class MPC(ABC):
         A tuple containing in order:
             u: The first action of the (solution) horizon.
             status: The acados status of the solve.
-            sensitivities: A tuple with two entries, containing du/dp in the first entry (or None if not requested) and du/dx in the second entry (or None if not requested). 
+            sensitivities: A tuple with two entries, containing du/dp in the first entry (or None if not requested) and du/dx in the second entry (or None if not requested).
         """
         if initialization is not None:
             self.initialize(initialization)
@@ -209,11 +211,15 @@ class MPC(ABC):
 
         # Calculate the policy gradient
         if return_dudp:
-            _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "params_global")
+            _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(
+                0, "params_global"
+            )
         else:
             dpidp = None
         if return_dudx:
-            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "initial_state")
+            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(
+                0, "initial_state"
+            )
         else:
             dpidx = None
 
@@ -511,6 +517,7 @@ class MPC(ABC):
             return value * (value > 0)
 
         cons = {}
+
         # state constraints
         if self.ocp.constraints.lbx is not None:
             cons["lbx"] = relu(self.ocp.constraints.lbx - x)
@@ -560,7 +567,3 @@ class MPC(ABC):
         """
 
         raise NotImplementedError
-
-    def __del__(self):
-        if self.cleanup:
-            shutil.rmtree(self.export_directory)

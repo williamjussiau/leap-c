@@ -28,7 +28,7 @@ class OCPEnv(gym.Env):
             max_time: The maximum time per episode.
         """
         self.mpc = mpc
-        self.dynamics = create_dynamics_from_mpc(mpc, mpc.export_directory / "dynamics")
+        self.dynamics = create_dynamics_from_mpc(mpc)
         self._dt = dt
         self.options = {"max_time": max_time}
 
@@ -64,12 +64,14 @@ class OCPEnv(gym.Env):
         shape = self.mpc.ocp.parameter_values.shape
 
         return spaces.Box(
-            low=np.full(shape, -np.inf), high=np.full(shape, np.inf), dtype=np.float32
+            low=np.full(shape, -np.inf).astype(np.float32),
+            high=np.full(shape, np.inf).astype(np.float32),
+            dtype=np.float32,
         )
 
     def derive_observation_space(self) -> spaces.Space:
         if self.parameter_space is not None:
-            return spaces.Tuple([self.state_space,self.parameter_space])
+            return spaces.Tuple([self.state_space, self.parameter_space])
         return self.state_space
 
     def init_state(self) -> np.ndarray:
@@ -149,7 +151,7 @@ class OCPEnv(gym.Env):
 
         # evaluate stage cost
         # cost = self.mpc.stage_cost(x, action, p)  # type: ignore
-        cost = 0.
+        cost = 0.0
 
         # assert action in self.action_space
         if self.x is None:

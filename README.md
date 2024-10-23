@@ -30,13 +30,19 @@ Create python virtual environment and install the (editable) package with the fo
 Install the minimum:
 
 ``` bash
-    python -m pip install -e .
+    pip install -e .
 ```
 
-or install with optional dependencies (e.g. for testing and linting):
+or install with optional dependencies (e.g. for testing):
 
 ``` bash
-    python -m pip install -e .[test]
+    pip install -e .[test]
+```
+
+Install cpu-only pytorch
+
+``` bash
+    pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 ```
 
 ## Usage

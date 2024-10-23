@@ -36,7 +36,7 @@ Install the minimum:
 or install with optional dependencies (e.g. for testing and linting):
 
 ``` bash
-    python -m pip install -e .[test,lint]
+    python -m pip install -e .[test]
 ```
 
 ## Usage

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "SEAL"
 version = "2024.0.0"
-dependencies = ["torch", "gymnasium", "scipy", "numpy", "pandas"]
+dependencies = ["torch", "gymnasium", "scipy", "numpy", "pandas", "ruff"]
 
 requires-python = ">=3.8"
 authors = [{ name = "Dirk Reinhardt", email = "dirk.p.reinhardt@ntnu.no" }]
@@ -25,7 +25,6 @@ classifiers = [
 
 [project.optional-dependencies]
 test = ["pytest"]
-lint = ["flake8", "ruff"]
 
 [tool.setuptools]
 packages = ["seal"]

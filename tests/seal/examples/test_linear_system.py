@@ -87,17 +87,17 @@ def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
 # ):
 #     """
 #     Generate a dictionary of keyword arguments for OCP (Optimal Control Problem) solvers.
-# 
+#
 #     This function creates a dictionary containing configurations for the OCP solver and
 #     OCP sensitivity solver. It checks if the JSON files specified by the `json_file_prefix`
 #     exist. If they do, it uses the provided `generate_code` and `build_code` flags. If not,
 #     it sets both `generate` and `build` to True.
-# 
+#
 #     Args:
 #         generate_code (bool): Flag to indicate whether to generate code.
 #         build_code (bool): Flag to indicate whether to build code.
 #         json_file_prefix (str): Prefix for the JSON file names.
-# 
+#
 #     Returns:
 #         dict: A dictionary containing the build/generate configurations for the OCP solver and OCP sensitivity solver.
 #     """
@@ -105,7 +105,7 @@ def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
 #         "ocp_solver": {"json_file": f"{json_file_prefix}.json"},
 #         "ocp_sensitivity_solver": {"json_file": f"{json_file_prefix}_sensitivity.json"},
 #     }
-# 
+#
 #     for val in kwargs.values():
 #         if os.path.isfile(val["json_file"]):
 #             val["generate"] = generate_code
@@ -113,7 +113,7 @@ def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
 #         else:
 #             val["generate"] = True
 #             val["build"] = True
-# 
+#
 #     return kwargs
 
 
@@ -122,7 +122,7 @@ def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
 #     Test the setup of an OCP solver with default parameters.
 #     """
 #     ocp_solver_kwargs = get_ocp_kwargs()
-# 
+#
 #     ocp_solver = setup_ocp_solver(
 #         ocp=export_parametric_ocp(param=get_test_param(), cost_type="EXTERNAL"),
 #         **ocp_solver_kwargs["ocp_solver"],
@@ -135,7 +135,7 @@ def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
 #     Test the setup of an OCP sensitivity solver with default parameters.
 #     """
 #     ocp_sensitivity_solver_kwargs = get_ocp_kwargs()
-# 
+#
 #     ocp_sensitivity_solver = setup_ocp_sensitivity_solver(
 #         ocp=export_parametric_ocp(param=get_test_param(), cost_type="EXTERNAL"),
 #         **ocp_sensitivity_solver_kwargs["ocp_sensitivity_solver"],
@@ -154,8 +154,8 @@ def set_up_mpc(
 
 
 def test_v_update(
-    generate_code: bool = False,
-    build_code: bool = False,
+    generate_code: bool = True,
+    build_code: bool = True,
     json_file_prefix: str = "acados_ocp_linear_system",
     x0: np.ndarray = np.array([0.1, 0.1]),
     varying_param_label: str = "A_0",
@@ -275,4 +275,4 @@ def test_open_loop(
 
 
 if __name__ == "__main__":
-    test_pi_update(build_code=True, generate_code=True, np_test=100, plot=True)
+    test_pi_update(build_code=True, generate_code=True, np_test=100, plot=False)

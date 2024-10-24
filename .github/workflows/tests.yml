@@ -1,0 +1,102 @@
+name: Tests
+
+on:
+  workflow_dispatch:
+  # push:
+    # branches: [ "main" ]
+  # pull_request:
+  #   branches: [ "main" ]
+
+jobs:
+
+  run_tests:
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: Checkout acados
+      uses: actions/checkout@v4
+      with:
+        repository: 'acados/acados'
+        path: ${{github.workspace}}/acados
+        fetch-depth: 2
+
+    - name: Checkout seal
+      uses: actions/checkout@v4
+      with:
+        path: ${{github.workspace}}/seal
+
+    # WIP
+    # - name: Download acados artifacts (build, lib, include) into acados repository
+    #   uses: actions/download-artifact@v4
+    #   with:
+    #     path: ${{github.workspace}}/acados
+    #     repository: jasperHoffmann/seal
+    #     # github-token: ${{ secrets.GITHUB_TOKEN }} # token with actions:read permissions on target repo
+    #     github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}  # Use the PAT stored as a secret
+    #     run-id: 11499678337
+    #     name: build
+
+    - name: Download acados artifacts (build, lib, include) into acados repository
+      uses: actions/download-artifact@v4
+      with:
+        path: ${{github.workspace}}/acados
+        repository: acados/acados
+        github-token: ${{ secrets.GITHUB_TOKEN }} # token with actions:read permissions on target repo
+        run-id: 11463776967
+        # run-id: 11365600144
+
+
+    - name: Export Paths
+      working-directory: ${{github.workspace}}/acados
+      shell: bash
+      run: |
+        ${{github.workspace}}/acados/.github/linux/export_paths.sh'' ${{github.workspace}}
+
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.11"
+
+    - name: Cache pip dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ hashFiles('**/pyproject.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+
+    - name: Install Python interface
+      working-directory: ${{github.workspace}}/acados
+      run: pip install --use-pep517 -e interfaces/acados_template
+
+    - name: Install Tera
+      working-directory: ${{github.workspace}}/acados
+      shell: bash
+      run: ${{github.workspace}}/acados/.github/linux/install_tera.sh
+
+    - name: Install seal
+      working-directory: ${{github.workspace}}/seal
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e .[test] 
+        pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
+
+    - name: List python packages
+      run: |
+        python -m pip list
+
+    - name: Echo acados-required paths
+      run: |
+        echo $LD_LIBRARY_PATH
+        echo $ACADOS_SOURCE_DIR
+
+    - name: Run acados examples
+      working-directory: ${{github.workspace}}/acados
+      run: |
+        python examples/acados_python/getting_started/minimal_example_ocp.py
+
+    - name: Run seal tests
+      working-directory: ${{github.workspace}}/seal
+      run: |
+        pytest 

@@ -1,11 +1,10 @@
 name: Tests
 
 on:
-  workflow_dispatch:
-  # push:
-    # branches: [ "main" ]
-  # pull_request:
-  #   branches: [ "main" ]
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
 
 jobs:
 
@@ -26,32 +25,21 @@ jobs:
       with:
         path: ${{github.workspace}}/seal
 
-    # WIP
-    # - name: Download acados artifacts (build, lib, include) into acados repository
-    #   uses: actions/download-artifact@v4
-    #   with:
-    #     path: ${{github.workspace}}/acados
-    #     repository: jasperHoffmann/seal
-    #     # github-token: ${{ secrets.GITHUB_TOKEN }} # token with actions:read permissions on target repo
-    #     github-token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}  # Use the PAT stored as a secret
-    #     run-id: 11499678337
-    #     name: build
-
     - name: Download acados artifacts (build, lib, include) into acados repository
       uses: actions/download-artifact@v4
       with:
         path: ${{github.workspace}}/acados
         repository: acados/acados
         github-token: ${{ secrets.GITHUB_TOKEN }} # token with actions:read permissions on target repo
-        run-id: 11463776967
-        # run-id: 11365600144
-
+        run-id: 11513005717  # latest release build
 
     - name: Export Paths
-      working-directory: ${{github.workspace}}/acados
+      working-directory: ${{github.workspace}}
       shell: bash
       run: |
-        ${{github.workspace}}/acados/.github/linux/export_paths.sh'' ${{github.workspace}}
+        echo "ACADOS_SOURCE_DIR=${{github.workspace}}/acados" >> $GITHUB_ENV
+        echo "ACADOS_INSTALL_DIR=${{github.workspace}}/acados" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=${{github.workspace}}/acados/lib" >> $GITHUB_ENV
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
@@ -68,7 +56,9 @@ jobs:
 
     - name: Install Python interface
       working-directory: ${{github.workspace}}/acados
-      run: pip install --use-pep517 -e interfaces/acados_template
+      run: |
+        pip install --upgrade pip
+        pip install interfaces/acados_template
 
     - name: Install Tera
       working-directory: ${{github.workspace}}/acados
@@ -78,23 +68,8 @@ jobs:
     - name: Install seal
       working-directory: ${{github.workspace}}/seal
       run: |
-        python -m pip install --upgrade pip
         pip install -e .[test] 
         pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
-
-    - name: List python packages
-      run: |
-        python -m pip list
-
-    - name: Echo acados-required paths
-      run: |
-        echo $LD_LIBRARY_PATH
-        echo $ACADOS_SOURCE_DIR
-
-    - name: Run acados examples
-      working-directory: ${{github.workspace}}/acados
-      run: |
-        python examples/acados_python/getting_started/minimal_example_ocp.py
 
     - name: Run seal tests
       working-directory: ${{github.workspace}}/seal

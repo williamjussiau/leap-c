@@ -1,14 +1,7 @@
 name: acados build
 
 on:
-  # workflow_dispatch
-
-  # Uncomment the following lines to run the workflow on every push when we have a separate organization for the seal repo
-  # push:
-    # branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
+  workflow_dispatch
 
 env:
   ACADOS_PYTHON: ON

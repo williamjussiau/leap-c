@@ -16,6 +16,16 @@ SEAL requires the following dependencies that need to be installed separately:
 - [casadi](https://web.casadi.org/) for symbolic computations
 - [acados](https://docs.acados.org/index.html) for generating OCP solvers
 
+### acados as a submodule
+
+SEAL uses acados as a submodule. To clone the repository with the submodule, use the following command:
+
+``` bash
+    git clone --recurse-submodules git@github.com:JasperHoffmann/seal.git
+```
+
+Follow the installation instructions for acados [here](https://docs.acados.org/installation/)
+
 ### Installation steps
 
 Create python virtual environment and install the (editable) package with the following commands:

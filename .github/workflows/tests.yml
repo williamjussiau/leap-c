@@ -13,33 +13,34 @@ jobs:
 
     steps:
 
-    - name: Checkout acados
-      uses: actions/checkout@v4
-      with:
-        repository: 'acados/acados'
-        path: ${{github.workspace}}/acados
-        fetch-depth: 2
 
     - name: Checkout seal
       uses: actions/checkout@v4
       with:
         path: ${{github.workspace}}/seal
+        submodules: 'recursive'
 
     - name: Download acados artifacts (build, lib, include) into acados repository
       uses: actions/download-artifact@v4
       with:
-        path: ${{github.workspace}}/acados
+        path: ${{github.workspace}}/seal/external/acados
         repository: acados/acados
-        github-token: ${{ secrets.GITHUB_TOKEN }} # token with actions:read permissions on target repo
-        run-id: 11513005717  # latest release build
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        run-id: 11502668066
+
+    - name: Install Tera
+      working-directory: ${{github.workspace}}/seal/external/acados
+      shell: bash
+      run: |
+        .github/linux/install_tera.sh
 
     - name: Export Paths
       working-directory: ${{github.workspace}}
       shell: bash
       run: |
-        echo "ACADOS_SOURCE_DIR=${{github.workspace}}/acados" >> $GITHUB_ENV
-        echo "ACADOS_INSTALL_DIR=${{github.workspace}}/acados" >> $GITHUB_ENV
-        echo "LD_LIBRARY_PATH=${{github.workspace}}/acados/lib" >> $GITHUB_ENV
+        echo "ACADOS_SOURCE_DIR=${{github.workspace}}/seal/external/acados" >> $GITHUB_ENV
+        echo "ACADOS_INSTALL_DIR=${{github.workspace}}/seal/external/acados" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=${{github.workspace}}/seal/external/acados/lib" >> $GITHUB_ENV
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
@@ -55,15 +56,11 @@ jobs:
           ${{ runner.os }}-pip-
 
     - name: Install Python interface
-      working-directory: ${{github.workspace}}/acados
+      working-directory: ${{github.workspace}}/seal/external/acados
       run: |
         pip install --upgrade pip
         pip install interfaces/acados_template
 
-    - name: Install Tera
-      working-directory: ${{github.workspace}}/acados
-      shell: bash
-      run: ${{github.workspace}}/acados/.github/linux/install_tera.sh
 
     - name: Install seal
       working-directory: ${{github.workspace}}/seal
@@ -74,4 +71,5 @@ jobs:
     - name: Run seal tests
       working-directory: ${{github.workspace}}/seal
       run: |
-        pytest 
+        pwd
+        pytest tests

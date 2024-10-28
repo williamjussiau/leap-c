@@ -33,3 +33,6 @@ packages = ["seal"]
 [project.urls]
 Repository = "https://github.com/JasperHoffmann/seal"
 "Bug Tracker" = "https://github.com/JasperHoffmann/seal/issues"
+
+[tool.pytest.ini_options]
+testpaths = "tests"

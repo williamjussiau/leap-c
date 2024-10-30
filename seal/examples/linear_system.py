@@ -2,11 +2,8 @@
 linear system
 """
 
-from copy import deepcopy
-import datetime as d
 import numpy as np
 import casadi as cs
-from multiprocessing import current_process
 from scipy import linalg
 from scipy.linalg import solve_discrete_are
 from acados_template import AcadosOcp
@@ -27,12 +24,9 @@ class LinearSystemMPC(MPC):
             }
 
         ocp = export_parametric_ocp(param)
-        ocp_sensitivity = deepcopy(ocp)
-
         configure_ocp_solver(ocp)
-        configure_ocp_sensitivity_solver(ocp_sensitivity)
 
-        super().__init__(ocp, ocp_sensitivity, gamma)
+        super().__init__(ocp, gamma)
 
 
 def disc_dyn_expr(x, u, param):
@@ -94,26 +88,6 @@ def configure_ocp_solver(
     ocp.solver_options.with_solution_sens_wrt_params = True
 
     # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
-
-
-def configure_ocp_sensitivity_solver(
-    ocp: AcadosOcp,
-):
-    ocp.model.name = f"{ocp.model.name}_sensitivity"
-
-    ocp.solver_options.tf = ocp.dims.N
-    ocp.solver_options.nlp_solver_type = "SQP"
-    ocp.solver_options.nlp_solver_step_length = 0.0
-    ocp.solver_options.nlp_solver_max_iter = 1
-    ocp.solver_options.qp_solver_iter_max = 200
-    ocp.solver_options.tol = 1e-10
-    ocp.solver_options.integrator_type = "DISCRETE"
-    ocp.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
-    ocp.solver_options.qp_solver_ric_alg = 1
-    ocp.solver_options.qp_solver_cond_N = ocp.dims.N
-    ocp.solver_options.hessian_approx = "EXACT"
-    ocp.solver_options.with_solution_sens_wrt_params = True
-    ocp.solver_options.with_value_sens_wrt_params = True
 
 
 def export_parametric_ocp(

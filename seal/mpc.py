@@ -5,6 +5,7 @@ from pathlib import Path
 from acados_template import AcadosOcp, AcadosOcpSolver
 import casadi as ca
 import numpy as np
+from copy import deepcopy
 
 from seal.util import AcadosFileManager
 
@@ -22,7 +23,6 @@ class MPC(ABC):
     def __init__(
         self,
         ocp: AcadosOcp,
-        ocp_sensitivity: AcadosOcp,
         gamma: float = 1.0,
         export_directory: Path | None = None,
         export_directory_sensitivity: Path | None = None,
@@ -33,7 +33,6 @@ class MPC(ABC):
 
         Args:
             ocp: Optimal control problem.
-            ocp_sensitivity: Optimal control problem to derive the sensitvities.
             gamma: Discount factor.
             export_directory: Directory to export the generated code.
             export_directory_sensitivity: Directory to export the generated
@@ -43,8 +42,22 @@ class MPC(ABC):
         """
 
         self.ocp = ocp
-        self.ocp_sensitivity = ocp_sensitivity
         self.discount_factor = gamma
+
+        # setup OCP for sensitivity solver
+        self.ocp_sensitivity = deepcopy(ocp)
+        self.ocp_sensitivity.translate_cost_to_external_cost()
+        self.ocp_sensitivity.solver_options.nlp_solver_type = "SQP"
+        self.ocp_sensitivity.solver_options.nlp_solver_step_length = 0.0
+        self.ocp_sensitivity.solver_options.nlp_solver_max_iter = 1
+        self.ocp_sensitivity.solver_options.qp_solver_iter_max = 200
+        self.ocp_sensitivity.solver_options.tol = self.ocp.solver_options.tol/1e3
+        self.ocp_sensitivity.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
+        self.ocp_sensitivity.solver_options.qp_solver_ric_alg = 1
+        self.ocp_sensitivity.solver_options.qp_solver_cond_N = self.ocp.dims.N
+        self.ocp_sensitivity.solver_options.hessian_approx = "EXACT"
+        self.ocp_sensitivity.solver_options.with_solution_sens_wrt_params = True
+        self.ocp_sensitivity.solver_options.with_value_sens_wrt_params = True
 
         # path management
         afm = AcadosFileManager(export_directory, cleanup)
@@ -52,7 +65,7 @@ class MPC(ABC):
 
         # setup ocp solvers, we make the creation lazy
         self._ocp_solver_fn = partial(afm.setup_acados_ocp_solver, ocp)
-        self._ocp_sensitivity_solver_fn = partial(afm_sens.setup_acados_ocp_solver, ocp_sensitivity)
+        self._ocp_sensitivity_solver_fn = partial(afm_sens.setup_acados_ocp_solver, self.ocp_sensitivity)
         self._ocp_solver = None
         self._ocp_sensitivity_solver = None
 

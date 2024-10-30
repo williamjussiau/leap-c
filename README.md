@@ -37,6 +37,13 @@ Create python virtual environment and install the (editable) package with the fo
     source seal_venv/bin/activate
 ```
 
+Install the required casadi version with the installation script:
+
+``` bash
+    cd <PATH_TO_SEAL_DIRECTORY>
+    ./install_new_casadi_py311_x86_64.sh
+```
+
 Install the minimum:
 
 ``` bash

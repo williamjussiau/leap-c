@@ -11,17 +11,15 @@ def set_up_test_parameters(
     scale_high: float = 1.1,
     varying_param_label="A_0",
 ) -> np.ndarray:
-    parameter_values = mpc.ocp_solver.acados_ocp.parameter_values
+    p_global_values = mpc.ocp_solver.acados_ocp.p_global_values
 
-    test_param = np.repeat(parameter_values, np_test).reshape(len(parameter_values), -1)
+    test_param = np.repeat(p_global_values, np_test).reshape(len(p_global_values), -1)
 
     # Vary parameter along one dimension of p_label
-    p_idx = find_idx_for_labels(mpc.ocp_solver.acados_ocp.model.p, varying_param_label)[
-        0
-    ]
+    p_idx = find_idx_for_labels(mpc.ocp_solver.acados_ocp.model.p_global, varying_param_label)[0]
     test_param[p_idx, :] = np.linspace(
-        scale_low * parameter_values[p_idx],
-        scale_high * parameter_values[p_idx],
+        scale_low * p_global_values[p_idx],
+        scale_high * p_global_values[p_idx],
         np_test,
     ).flatten()
 
@@ -37,28 +35,21 @@ def find_param_index_and_increment(test_param):
     return parameter_index, parameter_increment
 
 
-def compare_acados_value_gradients_to_finite_differences(
-    test_param, values, value_gradient_acados, plot: bool = True
-):
+def compare_acados_value_gradients_to_finite_differences(test_param, values, value_gradient_acados, plot: bool = True):
     # Assumes a constant parameter increment
     parameter_index, parameter_increment = find_param_index_and_increment(test_param)
 
-    value_gradient_finite_differences = np.gradient(
-        values, parameter_increment[parameter_index]
-    )
+    value_gradient_finite_differences = np.gradient(values, parameter_increment[parameter_index])
 
     absolute_difference = np.abs(
-        np.gradient(values, parameter_increment[parameter_index])
-        - value_gradient_acados[:, parameter_index]
+        np.gradient(values, parameter_increment[parameter_index]) - value_gradient_acados[:, parameter_index]
     )
 
     if plot:
         reconstructed_values = np.cumsum(value_gradient_acados @ parameter_increment)
         reconstructed_values += values[0] - reconstructed_values[0]
 
-        relative_difference = absolute_difference / np.abs(
-            value_gradient_acados[:, parameter_index]
-        )
+        relative_difference = absolute_difference / np.abs(value_gradient_acados[:, parameter_index])
 
         plt.figure()
         plt.subplot(4, 1, 1)
@@ -72,9 +63,7 @@ def compare_acados_value_gradients_to_finite_differences(
             value_gradient_finite_differences,
             label="value gradient via finite differences",
         )
-        plt.plot(
-            value_gradient_acados[:, parameter_index], label="value gradient via acados"
-        )
+        plt.plot(value_gradient_acados[:, parameter_index], label="value gradient via acados")
         plt.ylabel("value gradient")
         plt.grid()
         plt.legend()
@@ -91,9 +80,7 @@ def compare_acados_value_gradients_to_finite_differences(
     return absolute_difference
 
 
-def run_test_v_update_for_varying_parameters(
-    mpc: MPC, x0, test_param, plot: bool = False
-):
+def run_test_v_update_for_varying_parameters(mpc: MPC, x0, test_param, plot: bool = False):
     np_test = test_param.shape[1]
 
     # parameter_index, _ = find_param_index_and_increment(test_param)
@@ -109,9 +96,12 @@ def run_test_v_update_for_varying_parameters(
     value_gradient = np.array(value_gradient)
 
     # Evaluate v and dvdp using finite differences and compare
-    absolute_difference = compare_acados_value_gradients_to_finite_differences(
-        test_param, value, value_gradient, plot=plot
-    )
+    try:
+        absolute_difference = compare_acados_value_gradients_to_finite_differences(
+            test_param, value, value_gradient, plot=plot
+        )
+    except Exception as e:
+        print(e)
 
     return absolute_difference
 
@@ -134,16 +124,12 @@ def run_test_q_update_for_varying_parameters(
     value_gradient = np.array(value_gradient)
 
     # Evaluate value and value_gradient using finite differences and compare
-    absolute_difference = compare_acados_value_gradients_to_finite_differences(
-        test_param, value, value_gradient, plot=plot
-    )
+    absolute_difference = compare_acados_value_gradients_to_finite_differences(test_param, value, value_gradient, plot=plot)
 
     return absolute_difference
 
 
-def run_test_pi_update_for_varying_parameters(
-    mpc: MPC, x0, test_param, plot: bool = False
-):
+def run_test_pi_update_for_varying_parameters(mpc: MPC, x0, test_param, plot: bool = False):
     # Evaluate v and dvdp using acados
     np_test = test_param.shape[1]
 
@@ -153,7 +139,7 @@ def run_test_pi_update_for_varying_parameters(
     policy_gradient = []
 
     for i in range(np_test):
-        initial_values = dict(p=np.broadcast_to(test_param[None, :, i], (mpc.N+1, test_param.shape[0])))
+        initial_values = dict(p=test_param[None, :, i])
         pi_i, status, sens = mpc.pi_update(x0=x0, initialization=initial_values)
         dpidp_i = sens[0]
         assert status == 0
@@ -170,9 +156,7 @@ def run_test_pi_update_for_varying_parameters(
     dp = parameter_increment[parameter_index]
     policy_gradient_finite_differences = np.gradient(policy, dp, axis=0)
 
-    absolute_difference = np.abs(
-        policy_gradient_finite_differences - policy_gradient_acados
-    )
+    absolute_difference = np.abs(policy_gradient_finite_differences - policy_gradient_acados)
 
     if plot:
         reconstructed_policy = np.cumsum(policy_gradient_acados * dp, axis=0)
@@ -183,14 +167,10 @@ def run_test_pi_update_for_varying_parameters(
         for i in range(np_test):
             for j in range(mpc.ocp_solver.acados_ocp.dims.nu):
                 if np.abs(policy_gradient_acados[i, j]) > 1e-10:
-                    relative_difference[i, j] = absolute_difference[i, j] / np.abs(
-                        policy_gradient_acados[i, j]
-                    )
+                    relative_difference[i, j] = absolute_difference[i, j] / np.abs(policy_gradient_acados[i, j])
 
         if mpc.ocp_solver.acados_ocp.dims.nu == 1:
-            fig, ax = plt.subplots(
-                4, mpc.ocp_solver.acados_ocp.dims.nu, figsize=(10, 20)
-            )
+            fig, ax = plt.subplots(4, mpc.ocp_solver.acados_ocp.dims.nu, figsize=(10, 20))
             for i in range(mpc.ocp_solver.acados_ocp.dims.nu):
                 ax[0].plot(policy, label="policy")
                 ax[0].plot(
@@ -214,18 +194,14 @@ def run_test_pi_update_for_varying_parameters(
                     ax[j].grid()
             plt.show()
         else:
-            fig, ax = plt.subplots(
-                4, mpc.ocp_solver.acados_ocp.dims.nu, figsize=(10, 20)
-            )
+            fig, ax = plt.subplots(4, mpc.ocp_solver.acados_ocp.dims.nu, figsize=(10, 20))
             for i in range(mpc.ocp_solver.acados_ocp.dims.nu):
                 ax[0, i].plot(policy[:, i], label="policy")
                 ax[0, i].plot(
                     reconstructed_policy[:, i],
                     label="reconstructed policy from policy gradients",
                 )
-                ax[1, i].plot(
-                    policy_gradient_acados[:, i], label="policy gradient via acados"
-                )
+                ax[1, i].plot(policy_gradient_acados[:, i], label="policy gradient via acados")
                 ax[1, i].plot(
                     policy_gradient_finite_differences[:, i],
                     label="policy gradient via finite differences",

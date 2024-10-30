@@ -25,8 +25,8 @@ def create_dynamics_from_mpc(
     # if there is a discrete dynamics function, use it
     if ocp.model.disc_dyn_expr is not None:
         inputs = [ocp.model.x, ocp.model.u]
-        if ocp.model.p is not None:
-            inputs.append(ocp.model.p)
+        if ocp.model.p_global is not None:
+            inputs.append(ocp.model.p_global)
 
         expr = ocp.model.disc_dyn_expr
 

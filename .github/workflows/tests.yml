@@ -26,7 +26,7 @@ jobs:
         path: ${{github.workspace}}/seal/external/acados
         repository: acados/acados
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        run-id: 11502668066
+        run-id: 11554628168
 
     - name: Install Tera
       working-directory: ${{github.workspace}}/seal/external/acados
@@ -55,21 +55,25 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-pip-
 
+    - name: Install new Casadi
+      working-directory: ${{github.workspace}}/seal
+      run: |
+        ./install_new_casadi_py311_x86_64.sh
+
     - name: Install Python interface
       working-directory: ${{github.workspace}}/seal/external/acados
       run: |
         pip install --upgrade pip
         pip install interfaces/acados_template
 
-
     - name: Install seal
       working-directory: ${{github.workspace}}/seal
       run: |
-        pip install -e .[test] 
+        pip install -e .[test]
         pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
     - name: Run seal tests
       working-directory: ${{github.workspace}}/seal
       run: |
         pwd
-        pytest tests
+        pytest tests -vv -s

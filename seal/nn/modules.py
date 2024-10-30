@@ -67,7 +67,7 @@ class MPCSolutionModule(nn.Module):
     def forward(self, x0: torch.Tensor,
                 p: torch.Tensor,
                 initializations: list[dict[str, np.ndarray]] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
-        """ 
+        """
         Parameters:
             x0: The initial state of the MPC, shape (batch_size, xdim).
             p: The parameters of the MPC, shape (batch_size, pdim).

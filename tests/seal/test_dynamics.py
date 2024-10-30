@@ -43,3 +43,7 @@ def test_casadi_dynamics(linear_mpc: MPC):
     assert_almost_equal(x_next, x_next_batch[0])
     assert_almost_equal(Sx, Sx_batch[0])
     assert_almost_equal(Su, Su_batch[0])
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

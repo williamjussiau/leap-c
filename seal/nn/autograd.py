@@ -124,7 +124,7 @@ class MPCSolutionFunction(autograd.Function):
 
         x0 = tensor_to_numpy(x0)
         p = tensor_to_numpy(p)
-        initializations = integrate_p_into_initialization(p, initializations, stages=mpc.N+1)
+        initializations = integrate_p_into_initialization(p, initializations)
 
         u = np.zeros((batch_size, udim))
         dudp = np.zeros((batch_size, udim, pdim)) if need_dudp else None
@@ -186,7 +186,7 @@ class MPCSolutionFunction(autograd.Function):
 
 def integrate_p_into_initialization(p: np.ndarray,
                                     initializations: list[dict[str, np.ndarray]] | None,
-                                    stages: int) -> list[dict[str, np.ndarray]]:
+                                    ) -> list[dict[str, np.ndarray]]:
     """NOTE: If initializations is not None, it will be modified.
     """
     batch_size = p.shape[0]
@@ -197,7 +197,7 @@ def integrate_p_into_initialization(p: np.ndarray,
         if "p" in initializations[0].keys():
             raise ValueError("p in initialization would be overwritten!")
         for i, sample_init in initializations:
-            sample_init["p"] = np.broadcast_to(p[i, :], shape=(stages, 12))
+            sample_init["p"] = p[i, :]
     else:
-        initializations = [{"p": np.broadcast_to(p[i, :], shape=(stages, 12))} for i in range(batch_size)]
+        initializations = [{"p": p[i, :]} for i in range(batch_size)]
     return initializations

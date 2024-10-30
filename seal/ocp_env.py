@@ -58,10 +58,10 @@ class OCPEnv(gym.Env):
         )
 
     def derive_parameter_space(self) -> spaces.Box | None:
-        if self.mpc.ocp.parameter_values is None:
+        if self.mpc.ocp.p_global_values is None:
             return None
 
-        shape = self.mpc.ocp.parameter_values.shape
+        shape = self.mpc.ocp.p_global_values.shape
 
         return spaces.Box(
             low=np.full(shape, -np.inf).astype(np.float32),

@@ -31,7 +31,7 @@ class AcadosFileManager:
 
         Args:
             export_directory: The export directory if None create a folder in /tmp.
-            cleanup: Whether to delete the export directory on exit or when the 
+            cleanup: Whether to delete the export directory on exit or when the
                 instance of the AcadosFileManager is garbage collected.
         """
         self.export_directory = (

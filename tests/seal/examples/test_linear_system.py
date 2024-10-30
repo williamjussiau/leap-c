@@ -42,20 +42,20 @@ def get_test_param():
     }
 
 
-def test_set_p_get_p():
+def test_set_p_global_get_p_global():
     """
     Test if the set_p and get_p methods work correctly.
     """
 
     mpc = set_up_mpc()
 
-    p = mpc.get_p()
+    p = mpc.p_global_values
 
-    p += np.random.randn(p.shape[0], p.shape[1])
+    p += np.random.randn(p.shape[0])
 
-    mpc.set_p(p)
+    mpc.p_global_values = p
 
-    assert np.allclose(mpc.get_p(), p)
+    assert np.allclose(mpc.p_global_values, p)
 
 
 def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
@@ -275,4 +275,6 @@ def test_open_loop(
 
 
 if __name__ == "__main__":
-    test_pi_update(build_code=True, generate_code=True, np_test=100, plot=False)
+    # test_pi_update(build_code=True, generate_code=True, np_test=100, plot=False)
+    test_set_p_global_get_p_global()
+    # test_v_update(build_code=True, generate_code=True, np_test=100, plot=False)

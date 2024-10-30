@@ -155,7 +155,7 @@ def export_parametric_ocp(
     V_0 = cs.SX.sym("V_0", 1, 1)
     f = cs.SX.sym("f", 3, 1)
 
-    ocp.model.p = cs.vertcat(
+    ocp.model.p_global = cs.vertcat(
         cs.reshape(A, -1, 1),
         cs.reshape(B, -1, 1),
         cs.reshape(b, -1, 1),
@@ -163,9 +163,9 @@ def export_parametric_ocp(
         cs.reshape(f, -1, 1),
     )
 
-    ocp.parameter_values = np.concatenate(
+    ocp.p_global_values = np.concatenate(
         [param[key].T.reshape(-1, 1) for key in ["A", "B", "b", "V_0", "f"]]
-    )
+    ).flatten()
 
     ocp.model.disc_dyn_expr = A @ ocp.model.x + B @ ocp.model.u + b
 
@@ -193,12 +193,12 @@ def export_parametric_ocp(
     elif cost_type == "EXTERNAL":
         ocp.cost.cost_type_0 = "EXTERNAL"
         ocp.model.cost_expr_ext_cost_0 = cost_expr_ext_cost_0(
-            ocp.model.x, ocp.model.u, ocp.model.p
+            ocp.model.x, ocp.model.u, ocp.model.p_global
         )
 
         ocp.cost.cost_type = "EXTERNAL"
         ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(
-            ocp.model.x, ocp.model.u, ocp.model.p
+            ocp.model.x, ocp.model.u, ocp.model.p_global
         )
 
         ocp.cost.cost_type_e = "EXTERNAL"

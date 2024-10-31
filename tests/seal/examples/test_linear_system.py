@@ -256,9 +256,9 @@ def test_open_loop(
 
     mpc.ocp_solver.solve_for_x0(x0)
 
-    k = np.arange(mpc.ocp_solver.acados_ocp.dims.N)
-    u = np.array([mpc.ocp_solver.get(stage, "u") for stage in range(mpc.ocp_solver.acados_ocp.dims.N)])
-    x = np.array([mpc.ocp_solver.get(stage, "x") for stage in range(mpc.ocp_solver.acados_ocp.dims.N)])
+    k = np.arange(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)
+    u = np.array([mpc.ocp_solver.get(stage, "u") for stage in range(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)])
+    x = np.array([mpc.ocp_solver.get(stage, "x") for stage in range(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)])
 
     if plot:
         plt.figure()

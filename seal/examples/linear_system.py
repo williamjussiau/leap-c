@@ -11,7 +11,7 @@ from seal.mpc import MPC
 
 
 class LinearSystemMPC(MPC):
-    def __init__(self, param: dict[str, np.ndarray] | None = None, gamma: float = 0.99):
+    def __init__(self, param: dict[str, np.ndarray] | None = None, discount_factor: float | None = None):
         if param is None:
             param = {
                 "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
@@ -26,7 +26,7 @@ class LinearSystemMPC(MPC):
         ocp = export_parametric_ocp(param)
         configure_ocp_solver(ocp)
 
-        super().__init__(ocp, gamma)
+        super().__init__(ocp, discount_factor)
 
 
 def disc_dyn_expr(x, u, param):
@@ -78,7 +78,7 @@ def get_parameter(field, p) -> cs.DM:
 def configure_ocp_solver(
     ocp: AcadosOcp,
 ):
-    ocp.solver_options.tf = ocp.dims.N
+    ocp.solver_options.tf = ocp.solver_options.N_horizon
     ocp.solver_options.integrator_type = "DISCRETE"
     ocp.solver_options.nlp_solver_type = "SQP"
     ocp.solver_options.hessian_approx = "EXACT"
@@ -119,7 +119,7 @@ def export_parametric_ocp(
     ocp.model.x = cs.SX.sym("x", 2)
     ocp.model.u = cs.SX.sym("u", 1)
 
-    ocp.dims.N = 40
+    ocp.solver_options.N_horizon = 40
     ocp.dims.nx = 2
     ocp.dims.nu = 1
 
@@ -177,7 +177,7 @@ def export_parametric_ocp(
 
         ocp.cost.cost_type_e = "EXTERNAL"
         ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(
-            ocp.model.x, param, ocp.dims.N
+            ocp.model.x, param, ocp.solver_options.N_horizon
         )
 
     ocp.constraints.idxbx_0 = np.array([0, 1])

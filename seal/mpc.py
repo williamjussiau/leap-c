@@ -10,10 +10,6 @@ from copy import deepcopy
 from seal.util import AcadosFileManager
 
 
-def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
-    for stage in range(0, ocp_solver.acados_ocp.dims.N + 1):
-        ocp_solver.cost_set(stage, "scaling", discount_factor**stage)
-
 
 class MPC(ABC):
     """
@@ -23,7 +19,7 @@ class MPC(ABC):
     def __init__(
         self,
         ocp: AcadosOcp,
-        gamma: float = 1.0,
+        discount_factor: float | None = None,
         export_directory: Path | None = None,
         export_directory_sensitivity: Path | None = None,
         cleanup: bool = True,
@@ -33,7 +29,7 @@ class MPC(ABC):
 
         Args:
             ocp: Optimal control problem.
-            gamma: Discount factor.
+            discount_factor: Discount factor. If None, acados default cost scaling is used, i.e. dt for intermediate stages, 1 for terminal stage.
             export_directory: Directory to export the generated code.
             export_directory_sensitivity: Directory to export the generated
                 code for the sensitivity problem.
@@ -42,19 +38,18 @@ class MPC(ABC):
         """
 
         self.ocp = ocp
-        self.discount_factor = gamma
 
         # setup OCP for sensitivity solver
         self.ocp_sensitivity = deepcopy(ocp)
         self.ocp_sensitivity.translate_cost_to_external_cost()
         self.ocp_sensitivity.solver_options.nlp_solver_type = "SQP"
-        self.ocp_sensitivity.solver_options.nlp_solver_step_length = 0.0
+        self.ocp_sensitivity.solver_options.globalization_fixed_step_length = 0.0
         self.ocp_sensitivity.solver_options.nlp_solver_max_iter = 1
         self.ocp_sensitivity.solver_options.qp_solver_iter_max = 200
         self.ocp_sensitivity.solver_options.tol = self.ocp.solver_options.tol/1e3
         self.ocp_sensitivity.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
         self.ocp_sensitivity.solver_options.qp_solver_ric_alg = 1
-        self.ocp_sensitivity.solver_options.qp_solver_cond_N = self.ocp.dims.N
+        self.ocp_sensitivity.solver_options.qp_solver_cond_N = self.ocp.solver_options.N_horizon
         self.ocp_sensitivity.solver_options.hessian_approx = "EXACT"
         self.ocp_sensitivity.solver_options.with_solution_sens_wrt_params = True
         self.ocp_sensitivity.solver_options.with_value_sens_wrt_params = True
@@ -71,6 +66,10 @@ class MPC(ABC):
 
         self.__parameter_values = np.array([])
         self.__p_global_values = np.array([])
+        self.__discount_factor = None
+
+        if discount_factor is not None:
+            self.discount_factor = discount_factor # this will overwrite the acados cost scaling
 
     @property
     def ocp_solver(self) -> AcadosOcpSolver:
@@ -86,7 +85,7 @@ class MPC(ABC):
 
     @property
     def N(self) -> int:
-        return self.ocp_solver.acados_ocp.dims.N  # type: ignore
+        return self.ocp_solver.acados_ocp.solver_options.N_horizon  # type: ignore
 
     @property
     def default_param(self) -> np.ndarray:
@@ -95,6 +94,11 @@ class MPC(ABC):
     @property
     def p_global_values(self) -> np.ndarray:
         return self.ocp.p_global_values
+
+    @property
+    def discount_factor(self) -> float:
+        return self.__discount_factor
+
 
     @p_global_values.setter
     def p_global_values(self, p_global_values):
@@ -105,6 +109,23 @@ class MPC(ABC):
             # self._ocp_sensitivity_solver.set_p_global_and_precompute_dependencies(p_global_values)
         else:
             raise Exception("Invalid p_global_values value. " + f"Expected numpy array, got {type(p_global_values)}.")
+
+
+    @discount_factor.setter
+    def discount_factor(self, discount_factor):
+        """
+        Set the discount factor. This overwrites the scaling of the cost function (control interval length by default).
+        """
+
+        if isinstance(discount_factor, float) and discount_factor > 0 and discount_factor <= 1:
+            print(f"Setting discount factor to {discount_factor}.")
+            self.__discount_factor = discount_factor
+
+            MPC.__set_discount_factor(self.ocp_solver, discount_factor)
+            MPC.__set_discount_factor(self.ocp_sensitivity_solver, discount_factor)
+        else:
+            raise Exception("Invalid discount_factor value. " + f"Expected float in (0, 1], got {discount_factor}.")
+
 
     def get_action(self, x0: np.ndarray) -> np.ndarray:
         """
@@ -306,7 +327,7 @@ class MPC(ABC):
         Get the value of the parameters for the nlp.
         """
         params = []
-        N = self.ocp_solver.acados_ocp.dims.N
+        N = self.ocp_solver.acados_ocp.solver_options.N_horizon
         for stage in range(N + 1):
             params.append(self.ocp_solver.get(stage, "p"))
         return np.stack(params, axis=0)
@@ -347,10 +368,7 @@ class MPC(ABC):
     def reset(self, x0: np.ndarray):
         self.ocp_solver.reset()
 
-        set_discount_factor(self.ocp_solver, self.discount_factor)
-        set_discount_factor(self.ocp_sensitivity_solver, self.discount_factor)
-
-        for stage in range(self.ocp_solver.acados_ocp.dims.N + 1):
+        for stage in range(self.ocp_solver.acados_ocp.solver_options.N_horizon + 1):
             # self.ocp_solver.set(stage, "x", self.ocp_solver.acados_ocp.constraints.lbx_0)
             self.ocp_solver.set(stage, "x", x0)
             self.ocp_sensitivity_solver.set(stage, "x", x0)
@@ -389,7 +407,7 @@ class MPC(ABC):
 
     #     if "W" in p_temp.keys():
     #         self.nlp.set_parameter("W", p_temp["W"])
-    #         for stage in range(1, self.ocp_solver.acados_ocp.dims.N):
+    #         for stage in range(1, self.ocp_solver.acados_ocp.solver_options.N_horizon):
     #             self.ocp_solver.cost_set(
     #                 stage, "W", self.nlp.get_parameter("W").full(), api=api
     #             )
@@ -402,7 +420,7 @@ class MPC(ABC):
 
     #     if "yref" in p_temp.keys():
     #         self.nlp.set_parameter("yref", p_temp["yref"])
-    #         for stage in range(1, self.ocp_solver.acados_ocp.dims.N):
+    #         for stage in range(1, self.ocp_solver.acados_ocp.solver_options.N_horizon):
     #             self.ocp_solver.cost_set(
     #                 stage,
     #                 "yref",
@@ -412,26 +430,14 @@ class MPC(ABC):
 
     #     if self.ocp_solver.acados_ocp.dims.np > 0:
     #         self.nlp.set_parameter("model", p_temp["model"])
-    #         for stage in range(self.ocp_solver.acados_ocp.dims.N + 1):
+    #         for stage in range(self.ocp_solver.acados_ocp.solver_options.N_horizon + 1):
     #             self.ocp_solver.set(stage, "p", p_temp["model"].full().flatten())
 
-    def set_discount_factor(self, discount_factor_: float) -> None:
-        """
-        Set the discount factor.
+    @staticmethod
+    def __set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
+        for stage in range(ocp_solver.acados_ocp.solver_options.N_horizon + 1):
+            ocp_solver.cost_set(stage, "scaling", discount_factor**stage)
 
-        NB: This overwrites the scaling of the cost function(control interval length by default).
-
-        Args:
-            gamma: Discount factor.
-
-        """
-
-        print(f"Setting discount factor to {discount_factor_}")
-
-        self.discount_factor = discount_factor_
-
-        set_discount_factor(self.ocp_solver, discount_factor_)
-        set_discount_factor(self.ocp_sensitivity_solver, discount_factor_)
 
     def get(self, stage, field):
         return self.ocp_solver.get(stage, field)

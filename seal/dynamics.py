@@ -52,7 +52,7 @@ def create_dynamics_from_mpc(
     sim.parameter_values = ocp.parameter_values
 
     if dt is None:
-        dt = ocp.solver_options.tf / ocp.dims.N  # type: ignore
+        dt = ocp.solver_options.tf / ocp.solver_options.N_horizon  # type: ignore
 
     sim.solver_options.T = dt
 

@@ -231,8 +231,12 @@ class MPC(ABC):
         pi = self.ocp_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=True)
         status = self.ocp_solver.get_status()
 
-        self.ocp_solver.store_iterate(filename="iterate.json", overwrite=True, verbose=False)
-        self.ocp_sensitivity_solver.load_iterate(filename="iterate.json", verbose=False)
+        # TODO: Should everything below be moved to get_dpi_dp? Or should get_dpi_dp be removed?
+        # Transfer the iterate to the sensitivity solver
+        iterate = self.ocp_solver.store_iterate_to_flat_obj()
+        self.ocp_sensitivity_solver.load_iterate_from_flat_obj(iterate)
+
+        # Call the sensitivity solver to prepare the sensitivity calculations
         self.ocp_sensitivity_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=False)
 
         # Calculate the policy gradient
@@ -497,14 +501,14 @@ class MPC(ABC):
         """
         return self.ocp_solver.get(0, "u")
 
-    def get_dpi_dp(self, filename="iterate.json") -> np.ndarray:
+    def get_dpi_dp(self) -> np.ndarray:
         """
         Get the value of the sensitivity of the policy with respect to the parameters.
 
         Assumes OCP is solved for state and parameters.
         """
+        raise NotImplementedError("This method is not implemented yet.")
 
-        self.ocp_solver.store_iterate(filename=filename, overwrite=True, verbose=False)
 
         # TODO: Implement this using ocp_sensitivity_solver
 

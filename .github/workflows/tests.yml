@@ -26,7 +26,7 @@ jobs:
         path: ${{github.workspace}}/seal/external/acados
         repository: acados/acados
         github-token: ${{ secrets.GITHUB_TOKEN }}
-        run-id: 11593002252
+        run-id: 11616557149
 
     - name: Install Tera
       working-directory: ${{github.workspace}}/seal/external/acados

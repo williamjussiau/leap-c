@@ -152,14 +152,6 @@ class MPC(ABC):
 
         return action
 
-    def solve(self, store_iterate: bool = True, iterate_file: str = "iterate.json") -> int:
-        self.ocp_solver.solve()
-        self.ocp_solver.store_iterate(filename=iterate_file, overwrite=True, verbose=False)
-        # self.ocp_sensitivity_solver.load_iterate(filename=iterate_file, verbose=False)
-        # self.ocp_sensitivity_solver.solve()
-
-        # # _, sens_u_ = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "p_global")
-        # dVdp = self.ocp_sensitivity_solver.eval_and_get_optimal_value_gradient(with_respect_to = "p_global")
 
     def q_update(self, x0: np.ndarray, u0: np.ndarray, p: np.ndarray | None = None) -> int:
         """

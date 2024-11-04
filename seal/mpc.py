@@ -1,24 +1,179 @@
 from abc import ABC
-from functools import partial
+from copy import deepcopy
+from dataclasses import dataclass
+from functools import cached_property, partial
 from pathlib import Path
+from typing import Iterable, NamedTuple
 
-from acados_template import AcadosOcp, AcadosOcpSolver
 import casadi as ca
 import numpy as np
-from copy import deepcopy
+from acados_template import AcadosOcp, AcadosOcpSolver
+from acados_template.acados_ocp_iterate import AcadosOcpIterate
 
 from seal.util import AcadosFileManager
 
 
+def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
+    for stage in range(0, ocp_solver.acados_ocp.dims.N + 1):  # type:ignore
+        ocp_solver.cost_set(stage, "scaling", discount_factor**stage)
+
+class Parameter(NamedTuple):
+    """
+    It is not possible to set only an incomplete part of p_global: 
+    If some information for p_global is given, all information for p_global should be explicitly given.
+    
+    Parameters:
+    p_global_learnable: The part of p_global that should be learned in shape (n_p_global_learnable, ).
+    p_global_non_learnable: The part of p_global that should not be learned in shape (n_p_global_non_learnable, ).
+    p_stagewise: The stagewise parameters in shape (N+1, p_stagewise_dim) or (N+1, len(p_stagewise_sparse_idx)) if the next field is set.
+    p_stagewise_sparse_idx: If not None, stagewise parameters are set in a sparse manner, using these indices. 
+    """
+    p_global_learnable: np.ndarray | None  # Not yet with batch dim. 
+    p_global_non_learnable: np.ndarray | None  # Not yet with batch dim 
+    p_stagewise: np.ndarray | None  # Not yet with batch dim
+    p_stagewise_sparse_idx: np.ndarray | None  # Not yet with batch dim
+
+class ParameterManager():
+    """Class to manage the parameters of the ocp solver, i.e., which parameters are learnable, where the indices are, etc.."""
+    
+    def __init__(self, global_param_labels_to_idx: list[tuple[str, int, int, str]]):
+        """
+        Parameters:
+        param_labels_to_idx: A list containing for all parameters a tuple containing the parameter label name, the start and stop indices of the parameter in the parameter vector and an identifier, either "global_learnable" or "global_non_learnable".
+        global_param_labels_to_learn: A list of the parameter labels where the sensitivities can be computed. Those parameters are always expected to be in order of this list.
+        """
+        self.global_param_labels_to_info = global_param_labels_to_idx
+        self._run_sanity_check_on_global_param_labels_to_info()
+        
+    @cached_property
+    def slice_for_dudp_global_learnable(self) -> list[int]:
+        """Slice for transforming the sensitivities du/dp_global to du/dp_global_learnable."""
+        return self._calculate_slice_dudp()
+    
+    @property
+    def p_global_dim(self) -> int:
+        """Return the dimension of p_global."""
+        return self.global_param_labels_to_info[-1][2]
+    
+    def set_parameters_in_ocp_solver(self, ocp_solvers: list[AcadosOcpSolver], param: Parameter):
+        """Set the given parameters in the given ocp_solver. 
+        It is not possible to set only an incomplete part of p_global: 
+        If some information for p_global is given, all information for p_global should be explicitly given.
+        """
+        p_global_learnable, p_global_non_learnable, p_stagewise, p_stagewise_sparse_idx = param
+        
+        if p_global_learnable is not None or p_global_non_learnable is not None:
+            if p_global_non_learnable is None:
+                p_global_non_learnable = np.array([])
+            if p_global_learnable is None:
+                p_global_learnable = np.array([])
+            p_global = self._merge_learnable_and_not_learnable_to_p_global(p_global_learnable, p_global_non_learnable)
+            for ocp_solver in ocp_solvers:
+                ocp_solver.set_p_global_and_precompute_dependencies(p_global)
+        
+        if p_stagewise is not None:
+            for ocp_solver in ocp_solvers:
+                self._set_p_stagewise(ocp_solver, p_stagewise, p_stagewise_sparse_idx)
+            
+    
+    def _merge_learnable_and_not_learnable_to_p_global(self, parameters_to_learn: np.ndarray, non_learnable_parameters: np.ndarray) -> np.ndarray:
+        """
+        Merge the learnable and non-learnable parameters to the global parameter vector. Both are expected to be given in the same order as the labels.
+
+        Args:
+            parameters_to_learn: Learnable parameters, shape (n_learnable_parameters,).
+            non_learnable_parameters: Non-learnable parameters, shape (n_non_learnable_parameters,).
+
+        Returns:
+            p_global: A new numpy array of shape (n_global_parameters,) containing the learnable and non-learnable parameters mapped according to the order of labels.
+        """
+        p_global = np.zeros((parameters_to_learn.shape[0] + non_learnable_parameters.shape[0]))
+        if p_global.size < self.p_global_dim:
+            raise ValueError("It is not possible to provide only a part of p_global, all information for p_global should be explicitly given.")
+        learn_idx = 0
+        non_learn_idx = 0
+        for i, info in enumerate(self.global_param_labels_to_info):
+            _, start, stop, identifier = info
+            length = stop - start
+            if identifier == "global_learnable":
+                p_global[start:stop] = parameters_to_learn[learn_idx:learn_idx + length]
+                learn_idx += length
+            elif identifier == "global_non_learnable":
+                p_global[start:stop] = non_learnable_parameters[non_learn_idx:non_learn_idx + length]
+                non_learn_idx += length
+            else:
+                raise ValueError(f"Unknown identifier {identifier}.")
+        if learn_idx != parameters_to_learn.shape[0]:
+            raise ValueError("Not all learnable parameters were used. The given learnable parameter array is inconsistent with the global parameter info dict..")
+        if non_learn_idx != non_learnable_parameters.shape[0]:
+            raise ValueError("Not all non-learnable parameters were used. The given non-learnable parameter array is inconsistent with the global parameter info dict.")
+        return p_global
+    
+    def _run_sanity_check_on_global_param_labels_to_info(self):
+        """Check if the global_param_labels_to_info is valid."""
+        previous_stop = 0
+        for label, start, stop, identifier in self.global_param_labels_to_info:
+            if start >= stop:
+                raise ValueError(f"Invalid indices {start} and {stop} for parameter {label}.")
+            if start != previous_stop:
+                raise ValueError(f"Indices for parameter {label} are not continuing where the last label left off.")
+            if identifier not in ["global_learnable", "global_non_learnable"]:
+                raise ValueError(f"Unknown identifier {identifier}.")
+            previous_stop = stop
+         
+    def _calculate_slice_dudp(self) -> list[int]:
+        indices = []
+        for info in self.global_param_labels_to_info:
+            _, start, stop, identifier = info
+            if identifier == "global_learnable":
+                indices.extend(list(range(start, stop)))
+        return indices
+    
+    def _get_p_stagewise(self, ocp_solver: AcadosOcpSolver, stages: Iterable[int]) -> np.ndarray:
+        """
+        Obtain the value of the stagewise parameters in shape (len(stages), p_stagewise_dim) from the solver.
+        """
+        params = []
+        for stage in stages:
+            params.append(ocp_solver.get(stage, "p"))
+        return np.stack(params, axis=0)
+
+    def _set_p_stagewise(self, ocp_solver: AcadosOcpSolver, p_stagewise: np.ndarray, p_stagewise_sparse_idx: np.ndarray | None) -> None:
+        """Set p_stagewise in the respective solver."""
+        if p_stagewise_sparse_idx is not None:
+            for stage, val in enumerate(p_stagewise):            
+                ocp_solver.set_params_sparse(stage, p_stagewise_sparse_idx, p_stagewise)
+        else:
+            for stage, val in enumerate(p_stagewise):
+                ocp_solver.set(stage, "p", val)
+
+
+@dataclass
+class SolverState:
+    """Glorified dictionary used for initializing the MPC before solving the problem.
+    Every field that is not None will be used for the initialization in the initialize method of the MPC class.
+    NOTE: The acados iterate contains fields that will be overwritten by the fields in this class (e.g. x_traj), if provided.
+    NOTE: Can be extend by other fields (e.g. duals) if needed.
+    
+    Parameters:
+        acados_iterate: The iterate of the acados solver.
+        x_traj: The state trajectory of shape (mpc.N+1, x_dim).
+        u_traj: The action trajectory of shape (mpc.N, u_dim).
+    """
+    acados_ocp_iterate: AcadosOcpIterate | None = None
+    x_traj: np.ndarray | None = None
+    u_traj: np.ndarray | None = None
 
 class MPC(ABC):
     """
     MPC abstract base class.
     """
+    
 
     def __init__(
         self,
         ocp: AcadosOcp,
+        global_param_labels_to_info: list[tuple[str, int, int, str]],
         discount_factor: float | None = None,
         export_directory: Path | None = None,
         export_directory_sensitivity: Path | None = None,
@@ -29,6 +184,7 @@ class MPC(ABC):
 
         Args:
             ocp: Optimal control problem.
+            global_param_labels_to_info: A list containing for all parameters a tuple containing the parameter label name, the start and stop indices of the parameter in the parameter vector and an identifier, either "global_learnable" or "global_non_learnable"
             discount_factor: Discount factor. If None, acados default cost scaling is used, i.e. dt for intermediate stages, 1 for terminal stage.
             export_directory: Directory to export the generated code.
             export_directory_sensitivity: Directory to export the generated
@@ -63,6 +219,8 @@ class MPC(ABC):
         self._ocp_sensitivity_solver_fn = partial(afm_sens.setup_acados_ocp_solver, self.ocp_sensitivity)
         self._ocp_solver = None
         self._ocp_sensitivity_solver = None
+        
+        self._parameter_manager = ParameterManager(global_param_labels_to_info)
 
         self.__parameter_values = np.array([])
         self.__p_global_values = np.array([])
@@ -88,8 +246,8 @@ class MPC(ABC):
         return self.ocp_solver.acados_ocp.solver_options.N_horizon  # type: ignore
 
     @property
-    def default_param(self) -> np.ndarray:
-        return self.p_global_values
+    def p_global_dim(self) -> int:
+        return self._parameter_manager.p_global_dim
 
     @property
     def p_global_values(self) -> np.ndarray:
@@ -103,10 +261,11 @@ class MPC(ABC):
     @p_global_values.setter
     def p_global_values(self, p_global_values):
         if isinstance(p_global_values, np.ndarray):
+            p_global_values = p_global_values.reshape(-1)
             self.ocp.p_global_values = p_global_values
             self.ocp_sensitivity.p_global_values = p_global_values
-            # self._ocp_solver.set_p_global_and_precompute_dependencies(p_global_values)
-            # self._ocp_sensitivity_solver.set_p_global_and_precompute_dependencies(p_global_values)
+            self.ocp_solver.set_p_global_and_precompute_dependencies(p_global_values)
+            self.ocp_sensitivity_solver.set_p_global_and_precompute_dependencies(p_global_values)
         else:
             raise Exception("Invalid p_global_values value. " + f"Expected numpy array, got {type(p_global_values)}.")
 
@@ -204,28 +363,29 @@ class MPC(ABC):
     def pi_update(
         self,
         x0: np.ndarray,
-        initialization: dict[str, np.ndarray] | None = None,
+        p: Parameter,
+        initialization: SolverState | None = None,
         return_dudp: bool = True,
         return_dudx: bool = False,
     ) -> tuple[np.ndarray, int, tuple[np.ndarray | None, np.ndarray | None]]:
-        """Solves the OCP for the initial state x0 and parameters p
+        """Solves the OCP for the initial state x0 and learnable parameters p
         and returns the first action of the horizon, as well as
         the sensitivity of said action with respect to the parameters
         and the status of the solver.
 
         Parameters:
             x0: Initial state.
-            initialization: A map from the strings of fields (as in AcadosOcpSolver.set()) that should be initialized, to an np array which contains the values for those fields, being of shape (stages_of_that_field, field_dim).
+            p: Parameter class to set the parameters. For more info see the description of the Parameter class.
+            initialization: The MPCInitInfo object to use for initialization. For more info see the description of the MPCInitInfo class.
             return_dudp: Whether to return the sensitivity of the action with respect to the parameters.
             return_dudx: Whether to return the sensitivity of the action with respect to the state.
         Returns:
         A tuple containing in order:
             u: The first action of the (solution) horizon.
             status: The acados status of the solve.
-            sensitivities: A tuple with two entries, containing du/dp in the first entry (or None if not requested) and du/dx in the second entry (or None if not requested).
+            sensitivities: A tuple with two entries, containing du/dp_learnable in the first entry (or None if not requested) and du/dx in the second entry (or None if not requested).
         """
-        if initialization is not None:
-            self.initialize(initialization)
+        self.init_solvers(p, initialization)
 
         # Solve the optimization problem for initial state x0
         pi = self.ocp_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=True)
@@ -250,29 +410,31 @@ class MPC(ABC):
         else:
             dpidx = None
 
-        return pi, status, (dpidp, dpidx)
+        return pi, status, (dpidp, dpidx)  # type:ignore
 
-    def initialize(self, initialization: dict[str, np.ndarray]):
-        """Initializes the fields of the OCP solver with the given values.
+    def init_solvers(self, p: Parameter | None, initialization: SolverState | None):
+        """Initializes the fields of the OCP solvers with the given values.
         Parameters:
-            initialization: A map from the strings of fields (as in AcadosOcpSolver.set()) that should be initialized, to an np array which contains the values for those fields, being of shape (stages_of_that_field, field_dim)
+            p: The parameters to set in the OCP solver. See description of the Parameter class for more details.
+            initialization: See description of the MPCInitInfo class for more details. 
         """
-        for field, values in initialization.items():
-            if field == "p":
-                # NOTE: values is here p_global vector, not a trajecetory
-                # rename to set_p_global?
-                self.set_p(values)
-            elif field == "x":
-                for stage in range(self.N + 1):
-                    self.ocp_solver.set(stage, field, values[stage])
-                    self.ocp_sensitivity_solver.set(stage, field, values[stage])
-            elif field == "u":
+        if p is not None:
+            self._parameter_manager.set_parameters_in_ocp_solver([self.ocp_solver, self.ocp_sensitivity_solver], p)
+        if initialization is not None:
+            if initialization.x_traj is not None:
+                for stage, val in enumerate(initialization.x_traj):
+                    self.ocp_solver.set(stage, "x", val)
+                    self.ocp_sensitivity_solver.set(stage, "x", val)
+            if initialization.u_traj is not None:
+                values = initialization.u_traj
                 for stage in range(self.N):  # Setting u is not possible in the terminal stage.
-                    self.ocp_solver.set(stage, field, values[stage])
-                    self.ocp_sensitivity_solver.set(stage, field, values[stage])
-            else:
-                raise NotImplementedError("Setting this field is not implemented yet.")
-
+                    self.ocp_solver.set(stage, "u", values[stage])
+                    self.ocp_sensitivity_solver.set(stage, "u", values[stage])
+        
+    def slice_dudp_global_to_dudp_global_learnable(self, dudp: np.ndarray) -> np.ndarray:
+        """Slice the sensitivity du/dp_global to du/dp_global_learnable. Assumes the parameter dimension is the last dimension."""
+        return dudp[..., self._parameter_manager.slice_for_dudp_global_learnable]
+        
     def get_dV_dp(self) -> float:
         """
         Get the value of the sensitivity of the value function with respect to the parameters.
@@ -306,27 +468,6 @@ class MPC(ABC):
         """
         # TODO: Implement this
         pass
-
-    def set_p(self, p: np.ndarray) -> None:
-        """
-        Set the value of the parameters.
-
-        Args:
-            p: Parameters of shape (n, m), then n is the number of stages and m is number of parameters.
-        """
-        p = p.reshape(-1)
-        self.ocp_solver.set_p_global_and_precompute_dependencies(p)
-        self.ocp_sensitivity_solver.set_p_global_and_precompute_dependencies(p)
-
-    def get_p(self) -> np.ndarray:
-        """
-        Get the value of the parameters for the nlp.
-        """
-        params = []
-        N = self.ocp_solver.acados_ocp.solver_options.N_horizon
-        for stage in range(N + 1):
-            params.append(self.ocp_solver.get(stage, "p"))
-        return np.stack(params, axis=0)
 
     # def get_parameter_labels(self) -> list:
     #     return get_parameter_labels(self.ocp_solver.acados_ocp)
@@ -577,5 +718,5 @@ class MPC(ABC):
         Returns:
             stage_cost: Stage cost.
         """
-
-        raise NotImplementedError
+        # TODO: Implement this
+        raise NotImplementedError()

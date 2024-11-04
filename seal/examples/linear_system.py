@@ -2,18 +2,27 @@
 linear system
 """
 
-import numpy as np
 import casadi as cs
+import numpy as np
+from acados_template import AcadosOcp
 from scipy import linalg
 from scipy.linalg import solve_discrete_are
-from acados_template import AcadosOcp
+
 from seal.mpc import MPC
+from seal.ocp_env import OCPEnv, ParamCreator
 
 
 class LinearSystemMPC(MPC):
-    def __init__(self, param: dict[str, np.ndarray] | None = None, discount_factor: float | None = None):
-        if param is None:
-            param = {
+    """TODO: docstring for MPC."""
+
+    def __init__(
+        self,
+        params: dict[str, np.ndarray] | None = None,
+        learnable_params: list[str] = [],
+        discount_factor: float = 0.99,
+    ):
+        if params is None:
+            params = {
                 "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
                 "B": np.array([[0.03125], [0.25]]),
                 "Q": np.identity(2),
@@ -23,10 +32,56 @@ class LinearSystemMPC(MPC):
                 "V_0": np.array([1e-3]),
             }
 
-        ocp = export_parametric_ocp(param)
+        ocp = export_parametric_ocp(params)
+
         configure_ocp_solver(ocp)
 
-        super().__init__(ocp, discount_factor)
+        p_global = params.copy()
+        p_global.pop("Q")
+        p_global.pop("R")
+        # TODO Fix this properly, this is a hack, it should be clear what will be p global from the constructor and what not.
+        param_info = self.convert_param_dict_to_param_info(p_global, learnable_params)
+
+        super().__init__(ocp, param_info, discount_factor)
+
+    def convert_param_dict_to_param_info(
+        self, param_dict: dict[str, np.ndarray], learnable_param: list[str]
+    ) -> list[tuple[str, int, int, str]]:
+        """
+        Parameters:
+            param_dict: A dictionary mapping the labels of the parameters to numpy arrays containing the parameters.
+            learnable_param: A list of the labels of the parameters that should be learnable.
+        """
+        param_info = []
+        param_idx = 0
+        for key, param in param_dict.items():
+            learnable = (
+                "global_learnable" if key in learnable_param else "global_non_learnable"
+            )
+            param_info.append((key, param_idx, param_idx + param.size, learnable))
+            param_idx += param.size
+        return param_info
+
+
+class LinearSystemOcpEnv(OCPEnv):
+    def __init__(
+        self,
+        mpc: LinearSystemMPC,
+        param_creator: ParamCreator,
+        dt: float = 0.1,
+        max_time: float = 10.0,
+    ):
+        super().__init__(mpc, param_creator=param_creator, dt=dt, max_time=max_time)
+
+    def stage_cost(self, x: np.ndarray, u: np.ndarray, p: np.ndarray) -> float:
+        """The objective is just staying close to the origin, without leaving the state space.
+        Furthermore use as little control effort as possible.
+        """
+        # TODO: Make sure shapes are correct
+        cost = x.T @ x + u.T @ u
+        if x not in self.state_space:
+            cost += 1e1
+        return cost  # type:ignore
 
 
 def disc_dyn_expr(x, u, param):
@@ -73,6 +128,8 @@ def get_parameter(field, p) -> cs.DM:
         return p[8]
     elif field == "f":
         return cs.reshape(p[9:12], 3, 1)
+    else:
+        raise ValueError("Unknown parameter field.")
 
 
 def configure_ocp_solver(
@@ -116,20 +173,20 @@ def export_parametric_ocp(
 
     ocp.model.name = name
 
-    ocp.model.x = cs.SX.sym("x", 2)
-    ocp.model.u = cs.SX.sym("u", 1)
+    ocp.model.x = cs.SX.sym("x", 2)  # type:ignore
+    ocp.model.u = cs.SX.sym("u", 1)  # type:ignore
 
     ocp.solver_options.N_horizon = 40
     ocp.dims.nx = 2
     ocp.dims.nu = 1
 
-    A = cs.SX.sym("A", 2, 2)
-    B = cs.SX.sym("B", 2, 1)
-    b = cs.SX.sym("b", 2, 1)
-    V_0 = cs.SX.sym("V_0", 1, 1)
-    f = cs.SX.sym("f", 3, 1)
+    A = cs.SX.sym("A", 2, 2)  # type:ignore
+    B = cs.SX.sym("B", 2, 1)  # type:ignore
+    b = cs.SX.sym("b", 2, 1)  # type:ignore
+    V_0 = cs.SX.sym("V_0", 1, 1)  # type:ignore
+    f = cs.SX.sym("f", 3, 1)  # type:ignore
 
-    ocp.model.p_global = cs.vertcat(
+    ocp.model.p_global = cs.vertcat(  # type:ignore
         cs.reshape(A, -1, 1),
         cs.reshape(B, -1, 1),
         cs.reshape(b, -1, 1),

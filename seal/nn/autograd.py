@@ -2,14 +2,14 @@
 
 TODO (Jasper): Does JIT compilation speed up the module?
 """
+import casadi as ca
 import numpy as np
 import torch
 import torch.autograd as autograd
-import torch.nn as nn
-import casadi as ca
-from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSimSolver
+from acados_template import AcadosSimSolver
+
+from seal.mpc import MPC, Parameter, SolverState
 from seal.util import tensor_to_numpy
-from seal.mpc import MPC
 
 
 class AutogradCasadiFunction(autograd.Function):
@@ -110,36 +110,37 @@ class DynamicsSimFunction(autograd.Function):
 
 class MPCSolutionFunction(autograd.Function):
     @staticmethod
-    def forward(ctx, mpc: MPC, x0: torch.Tensor, p: torch.Tensor,
-                initializations: list[dict[str, np.ndarray]] | None) -> torch.Tensor:
+    def forward(ctx, mpc: MPC, x0: torch.Tensor, p_global_learnable: torch.Tensor, p_rests: list[Parameter],
+                initializations: list[SolverState] | None) -> torch.Tensor:
         device = x0.device
         dtype = x0.dtype
         batch_size = x0.shape[0]
         xdim = x0.shape[1]
-        pdim = p.shape[1]
+        pdim = mpc.p_global_dim
         udim = mpc.ocp.dims.nu
 
         need_dudx = ctx.needs_input_grad[1]
         need_dudp = ctx.needs_input_grad[2]
 
         x0 = tensor_to_numpy(x0)
-        p = tensor_to_numpy(p)
-        initializations = integrate_p_into_initialization(p, initializations)
+        p_global_learnable = tensor_to_numpy(p_global_learnable)
+        p_whole = integrate_p_global_learnable_into_p_rest(p_global_learnable, p_rests)
 
         u = np.zeros((batch_size, udim))
-        dudp = np.zeros((batch_size, udim, pdim)) if need_dudp else None
+        dudp_global = np.zeros((batch_size, udim, pdim)) if need_dudp else None
         dudx = np.zeros((batch_size, udim, xdim)) if need_dudx else None
         status = np.zeros(batch_size, dtype=np.int8)
 
         for i in range(batch_size):
+            init = initializations if initializations is None else initializations[i]
             u[i, :], status[i], sens = mpc.pi_update(
-                x0=x0[i, :], initialization=initializations[i], return_dudp=need_dudp, return_dudx=need_dudx)
+                x0=x0[i, :], p=p_whole[i], initialization=init, return_dudp=need_dudp, return_dudx=need_dudx)
             if need_dudp:
-                dudp[i, :, :] = sens[0]
+                dudp_global[i, :, :] = sens[0]
             if need_dudx:
                 dudx[i, :, :] = sens[1]
 
-        ctx.dudp = dudp
+        ctx.dudp_global_learnable = mpc.slice_dudp_global_to_dudp_global_learnable(dudp_global) if need_dudp else None
         ctx.dudx = dudx
 
         u = torch.tensor(u, device=device, dtype=dtype)
@@ -172,32 +173,28 @@ class MPCSolutionFunction(autograd.Function):
             grad_x = None
 
         if need_dudp:
-            dudp = ctx.dudp
-            if dudp is None:
+            dudp_global_learnable = ctx.dudp_global_learnable
+            if dudp_global_learnable is None:
                 raise ValueError(
                     "ctx.needs_input_grad wrt. p was not True in forward pass, it is not working as we expected.")
-            dudp = torch.tensor(dudp, device=device, dtype=dtype)
-            grad_p = torch.einsum("bkj,bk->bj", dudp, dLdu)
+            dudp_global_learnable = torch.tensor(dudp_global_learnable, device=device, dtype=dtype)
+            grad_p = torch.einsum("bkj,bk->bj", dudp_global_learnable, dLdu)
         else:
             grad_p = None
 
         return (None, grad_x, grad_p, None, None)
 
 
-def integrate_p_into_initialization(p: np.ndarray,
-                                    initializations: list[dict[str, np.ndarray]] | None,
-                                    ) -> list[dict[str, np.ndarray]]:
-    """NOTE: If initializations is not None, it will be modified.
+def integrate_p_global_learnable_into_p_rest(p_learnable: np.ndarray, p_rests: list[Parameter]
+                                    ) -> list[Parameter]:
+    """NOTE: p_rest should not contain a p_learnable attribute that is None since it will be overwritten!
     """
-    batch_size = p.shape[0]
-    if initializations is not None and len(initializations) != batch_size:
-        raise ValueError("initializations must be a list of dictionaries with length equal to the batch size.")
-
-    if initializations is not None:
-        if "p" in initializations[0].keys():
-            raise ValueError("p in initialization would be overwritten!")
-        for i, sample_init in initializations:
-            sample_init["p"] = p[i, :]
-    else:
-        initializations = [{"p": p[i, :]} for i in range(batch_size)]
-    return initializations
+    batch_size = p_learnable.shape[0]
+    if len(p_rests) != batch_size:
+        raise ValueError("p_rests must be a list of length equal to the batch size.")
+    new_p_rests = []
+    if p_rests[0].p_global_learnable is not None: # Simple check if p is already in the p_rests
+        raise ValueError("p in initialization would be overwritten!")
+    for i, sample_p_rest in enumerate(p_rests):
+        new_p_rests.append(Parameter(p_learnable[i, :], sample_p_rest[1], sample_p_rest[2], sample_p_rest[3]))
+    return new_p_rests

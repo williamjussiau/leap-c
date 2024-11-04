@@ -3,14 +3,14 @@ from copy import deepcopy
 from functools import partial
 from pathlib import Path
 
-from acados_template import (
-    AcadosOcp,
-    AcadosSimOptions,
-    AcadosSim,
-    AcadosSimSolver,
-)
 import casadi as ca
 import numpy as np
+from acados_template import (
+    AcadosOcp,
+    AcadosSim,
+    AcadosSimOptions,
+    AcadosSimSolver,
+)
 
 from seal.mpc import MPC
 from seal.util import AcadosFileManager

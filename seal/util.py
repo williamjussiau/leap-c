@@ -1,11 +1,12 @@
 import atexit
-from pathlib import Path
+import os
 import shutil
+from pathlib import Path
 from tempfile import mkdtemp
 
-from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSim, AcadosSimSolver
 import casadi as ca
 import torch
+from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSim, AcadosSimSolver
 
 
 def find_idx_for_labels(sub_vars: ca.SX, sub_label: str) -> list[int]:
@@ -17,6 +18,11 @@ def find_idx_for_labels(sub_vars: ca.SX, sub_label: str) -> list[int]:
     ]
 
 
+def create_dir_if_not_exists(directory):
+    if not os.path.exists(directory):
+        os.mkdir(directory)
+
+
 def tensor_to_numpy(tensor: torch.Tensor):
     return tensor.detach().cpu().numpy()
 
@@ -25,7 +31,9 @@ class AcadosFileManager:
     """A simple class to manage the export directory for acados solvers."""
 
     def __init__(
-        self, export_directory: Path | None = None, cleanup: bool = True,
+        self,
+        export_directory: Path | None = None,
+        cleanup: bool = True,
     ):
         """Initialize the export directory manager.
 

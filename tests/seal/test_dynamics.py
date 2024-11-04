@@ -1,26 +1,26 @@
-import pytest
-
 import numpy as np
+import pytest
 from numpy.testing import assert_almost_equal
 
-from seal.mpc import MPC
 from seal.dynamics import create_dynamics_from_mpc
+from seal.mpc import MPC
+from seal.ocp_env import ConstantParamCreator
 
 
-def test_casadi_dynamics(linear_mpc: MPC):
+def test_casadi_dynamics(linear_mpc: MPC, linear_system_default_param_creator: ConstantParamCreator):
     dynamics = create_dynamics_from_mpc(linear_mpc, "dynamics")
 
     # test forward single sample
     x = np.array([0.5, 0.5])
     u = np.array([0.5])
-    p = linear_mpc.default_param
+    p = linear_system_default_param_creator.current_param
 
     x_next = dynamics(x, u, p)
 
     # test forward multiple samples
     x = np.array([[0.5, 0.5], [0.3, 0.2]])
     u = np.array([[0.5], [0.2]])
-    p = np.stack([linear_mpc.default_param, linear_mpc.default_param])
+    p = np.stack([linear_system_default_param_creator.current_param, linear_system_default_param_creator.current_param])
 
     x_next_batch = dynamics(x, u, p)
 
@@ -29,14 +29,14 @@ def test_casadi_dynamics(linear_mpc: MPC):
     # test jacobian
     x = np.array([0.5, 0.5])
     u = np.array([0.5])
-    p = linear_mpc.default_param
+    p = linear_system_default_param_creator.current_param
 
     x_next, Sx, Su = dynamics(x, u, p, with_sens=True)
 
     # test jacobian multiple samples
     x = np.array([[0.5, 0.5], [0.3, 0.2]])
     u = np.array([[0.5], [0.2]])
-    p = np.stack([linear_mpc.default_param, linear_mpc.default_param])
+    p = np.stack([linear_system_default_param_creator.current_param, linear_system_default_param_creator.current_param])
 
     x_next_batch, Sx_batch, Su_batch = dynamics(x, u, p, with_sens=True)
 

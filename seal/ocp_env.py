@@ -1,16 +1,54 @@
+from abc import ABC, abstractmethod
+
 import gymnasium as gym
-from gymnasium import spaces
 import numpy as np
+from gymnasium import spaces
 
-from seal.mpc import MPC
 from seal.dynamics import create_dynamics_from_mpc
-
+from seal.mpc import MPC
 
 MPCInput = tuple[np.ndarray, np.ndarray | None]
 
 
+class ParamCreator(ABC):
+    """Something that is used to create parameters for the MPC in every step of the Environment.
+    #TODO: Could be part of Dynamics?
+    """
+
+    @property
+    @abstractmethod
+    def current_param(self) -> np.ndarray:
+        raise NotImplementedError()
+    
+    @abstractmethod
+    def step(self):
+        raise NotImplementedError()
+
+    @abstractmethod    
+    def reset(self):
+        raise NotImplementedError()
+    
+    
+
+class ConstantParamCreator(ParamCreator):
+    """A ParameterCreator that always returns the same parameter.
+    """
+    def __init__(self, param: np.ndarray):
+        self.param = param.copy()
+        
+    @property
+    def current_param(self) -> np.ndarray:
+        return self.param
+    
+    def step(self):
+        return self.param
+    
+    def reset(self):
+        return self.param
+    
+
 class OCPEnv(gym.Env):
-    def __init__(self, mpc: MPC, dt: float = 0.1, max_time: float = 10.0):
+    def __init__(self, mpc: MPC, param_creator: ParamCreator, dt: float = 0.1, max_time: float = 10.0):
         """A gym environment created from an MPC object.
 
         The gym environment could be used to generate new samples
@@ -24,6 +62,7 @@ class OCPEnv(gym.Env):
 
         Args:
             mpc: The learnable MPC planner.
+            param_creator: Creates the parameters for the MPC in every step.
             dt: The time discretization of the environment.
             max_time: The maximum time per episode.
         """
@@ -31,6 +70,7 @@ class OCPEnv(gym.Env):
         self.dynamics = create_dynamics_from_mpc(mpc)
         self._dt = dt
         self.options = {"max_time": max_time}
+        self.param_creator = param_creator
 
         self.episode_idx = -1
         self.t = 0
@@ -96,7 +136,7 @@ class OCPEnv(gym.Env):
         """
         if self.x is None:
             raise ValueError("State is not set. Call reset first.")
-        return self.x.copy(), self.mpc.default_param
+        return self.x.copy(), self.param_creator.current_param
 
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
@@ -126,10 +166,17 @@ class OCPEnv(gym.Env):
         self.u_his = []
 
         # TODO: Remove this!
-        x, p = self.mpc_input()
+        x, _ = self.mpc_input()
         self.mpc.reset(x)  # type: ignore
+        p = self.param_creator.reset()
 
         return (x, p), {}
+
+    def stage_cost(self, x: np.ndarray, u: np.ndarray, p: np.ndarray) -> float:
+        """Return the stage cost of the current state and action."""
+        # TODO: Implement this in the MPC class
+        # self.mpc.stage_cost()
+        return 0.0
 
     def step(self, action: np.ndarray) -> tuple[MPCInput, float, bool, bool, dict]:
         """The step function of the environment.
@@ -139,7 +186,7 @@ class OCPEnv(gym.Env):
 
         Returns:
             next state: The next state of the environment.
-            cost: The cost of the current state and action.
+            reward: The reward of the current state and action.
             terminal: Whether the episode reached a terimal state => V(x)=0.
             truncated: Whether the episode is finished without reaching a terminal
                 state.
@@ -150,8 +197,7 @@ class OCPEnv(gym.Env):
         info = self.mpc.stage_cons(x, action, p)  # type: ignore
 
         # evaluate stage cost
-        # cost = self.mpc.stage_cost(x, action, p)  # type: ignore
-        cost = 0.0
+        cost = self.stage_cost(x, action, p)  # type: ignore
 
         # assert action in self.action_space
         if self.x is None:
@@ -159,6 +205,7 @@ class OCPEnv(gym.Env):
 
         self.t += self._dt
         self.x = self.dynamics(x, action, p)  # type: ignore
+        self.param_creator.step()
         x_next, p_next = self.mpc_input()
 
         self.x_his.append(self.x.copy())  # type: ignore
@@ -169,4 +216,4 @@ class OCPEnv(gym.Env):
             truncated = True
             self.x = None
 
-        return (x_next, p_next), cost, False, truncated, info
+        return (x_next, p_next), -cost, False, truncated, info

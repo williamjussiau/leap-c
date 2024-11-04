@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 
 from seal.examples.linear_system import LinearSystemMPC
+from seal.ocp_env import ConstantParamCreator
 
 
 def get_test_param():
@@ -35,3 +36,10 @@ def get_test_param():
 def linear_mpc():
     return LinearSystemMPC(get_test_param())
 
+@pytest.fixture(scope="session")
+def linear_system_default_param_creator():
+    params = get_test_param()
+    params.pop("Q")
+    params.pop("R")
+    default_params = np.concatenate([val.flatten() for key, val in params.items()])
+    return ConstantParamCreator(default_params)

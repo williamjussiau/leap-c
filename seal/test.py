@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from seal.mpc import MPC
+
+from seal.mpc import MPC, Parameter
 from seal.util import find_idx_for_labels
 
 
@@ -139,8 +140,8 @@ def run_test_pi_update_for_varying_parameters(mpc: MPC, x0, test_param, plot: bo
     policy_gradient = []
 
     for i in range(np_test):
-        initial_values = dict(p=test_param[None, :, i])
-        pi_i, status, sens = mpc.pi_update(x0=x0, initialization=initial_values)
+        p = Parameter(p_global_learnable=None, p_global_non_learnable=test_param[:, i], p_stagewise=None, p_stagewise_sparse_idx=None)
+        pi_i, status, sens = mpc.pi_update(x0=x0, p=p)
         dpidp_i = sens[0]
         assert status == 0
         policy.append(pi_i)

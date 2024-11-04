@@ -1,17 +1,16 @@
-import os
 import matplotlib.pyplot as plt
 import numpy as np
-from acados_template import AcadosOcp, AcadosOcpSolver
-from seal.examples.linear_system import (
-    export_parametric_ocp,
-    LinearSystemMPC,
-)
 import pytest
+from acados_template import AcadosOcp
 
+from seal.examples.linear_system import (
+    LinearSystemMPC,
+    export_parametric_ocp,
+)
 from seal.test import (
-    run_test_v_update_for_varying_parameters,
-    run_test_q_update_for_varying_parameters,
     run_test_pi_update_for_varying_parameters,
+    run_test_q_update_for_varying_parameters,
+    run_test_v_update_for_varying_parameters,
     set_up_test_parameters,
 )
 
@@ -85,9 +84,11 @@ def set_up_mpc(
     generate_code: bool = False,
     build_code: bool = False,
     json_file_prefix: str = "acados_ocp_linear_system",
+    learnable_params: list[str] = []
 ) -> LinearSystemMPC:
     return LinearSystemMPC(
-        param=get_test_param(),
+        params=get_test_param(),
+        learnable_params=learnable_params
     )
 
 

@@ -1,11 +1,12 @@
-import pytest
-from seal.examples.linear_system import LinearSystemMPC
-from seal.ocp_env import OCPEnv
 import numpy as np
 
+from seal.mpc import MPC
+from seal.ocp_env import ConstantParamCreator, OCPEnv
 
-def test_env_reset(linear_mpc):
-    env = OCPEnv(linear_mpc)
+
+def test_env_reset(linear_mpc: MPC, linear_system_default_param_creator: ConstantParamCreator):
+    param_creator = linear_system_default_param_creator
+    env = OCPEnv(linear_mpc, param_creator)
 
     (x, p), _ = env.reset(seed=0)
     assert x is not None
@@ -14,8 +15,9 @@ def test_env_reset(linear_mpc):
     assert np.allclose(x, x_)
 
 
-def test_env_step(linear_mpc):
-    env = OCPEnv(linear_mpc)
+def test_env_step(linear_mpc: MPC, linear_system_default_param_creator: ConstantParamCreator):
+    param_creator = linear_system_default_param_creator
+    env = OCPEnv(linear_mpc, param_creator)
 
     env.reset(seed=0)
     action = np.array([0])

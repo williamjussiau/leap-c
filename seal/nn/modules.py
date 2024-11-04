@@ -1,12 +1,13 @@
+import math
+
 import casadi as ca
-import numpy as np
 import torch
 import torch.nn as nn
+from acados_template import AcadosSimSolver
 
-from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSimSolver
+from seal.mpc import MPC, Parameter, SolverState
+
 from .autograd import AutogradCasadiFunction, DynamicsSimFunction, MPCSolutionFunction
-
-from seal.mpc import MPC
 
 
 class CasadiExprModule(nn.Module):
@@ -45,7 +46,7 @@ class MPCSolutionModule(nn.Module):
     the initial state or the parameters of the MPC. Currently only supporting parameters that are global over the horizon
     (contrary to stagewise parameters).
 
-        NOTE: This is uses an mpc for every sample in a batch, so it is not efficient for large batch sizes.
+        NOTE: This solves every sample in the batch sequentially, so it is not efficient for large batch sizes.
 
         NOTE: Make sure that you follow the documentation of AcadosOcpSolver.eval_solution_sensitivity,
         or else the gradients used in the backpropagation might be erroneous! In particular,
@@ -54,7 +55,7 @@ class MPCSolutionModule(nn.Module):
         NOTE: Currently, acados guards calculating sensitivities for parameters in constraints with an Exception.
         Still, it might be that you want to have such parameters,
         and still use the sensitivities of OTHER parameters.
-        For this, you can, e.g. in acados github commit 95c341c6,
+        For this, you can, e.g., in acados github commit 95c341c6,
         disable the Exception in acados_ocp.py, line 800 to still calculate all the sensitivities
         and then only use the sensitivities of the parameters not belonging to constraints
         (because as acados states in eval_solution_sensitivity, they are erroneous).
@@ -65,17 +66,81 @@ class MPCSolutionModule(nn.Module):
         self.mpc = mpc
 
     def forward(self, x0: torch.Tensor,
-                p: torch.Tensor,
-                initializations: list[dict[str, np.ndarray]] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
+                p_global_learnable: torch.Tensor,
+                p_rests: list[Parameter],
+                initializations: list[SolverState] | None = None) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Parameters:
             x0: The initial state of the MPC, shape (batch_size, xdim).
-            p: The parameters of the MPC, shape (batch_size, pdim).
-            initializationa: A list of length batch_size, containing maps from the strings of fields (as in AcadosOcpSolver.set()) that should be initialized, to an np array which contains the values for those fields, being of shape (stages_of_that_field, field_dim).
+            p_global_learnable: The parameters of the MPC, shape (batch_size, pdim).
+            p_rests: A list of length batch_size with the remaining parameter information for the MPC. NOTE that it should not contain p_global_learnable, since this will be overwritten by p!
+            initializations: A list of length batch_size which contains the initialization to use in every solve.
         Returns:
             A tuple of tensors, the first entry containing the first action u[0] of the MPC solution,
-            given the initial state and parameters and the second entry containing the acados status
+            given the initial state and parameters, the second entry containing the acados status
             of that solution (useful for e.g., logging, debugging or cleaning the backward pass from non-converged solutions).
-
         """
-        return MPCSolutionFunction.apply(self.mpc, x0, p, initializations)
+        return MPCSolutionFunction.apply(self.mpc, x0, p_global_learnable, p_rests, initializations)
+
+
+class CleanseAndReducePerSampleLoss(nn.Module):
+    """A module that is ment to substitute the last part of a loss,
+    taking over the reduction to a scalar and, in particular,
+    cleansing the per-sample-loss of the samples whose MPC-part did not converge.
+    This basically works by removing all samples that correspond to a status unequal to 0, 
+    hence effectively training with a varying batch_size.
+    """
+
+    def __init__(self, reduction: str, num_batch_dimensions: int,
+                 n_nonconvergences_allowed: int, throw_exception_if_exceeded: bool = False):
+        """
+        Parameters:
+            reduction: Either "mean", "sum" or "none" as in native pytorch modules.
+            num_batch_dimensions: Determines how many of the first dimensions should be treated as batch_dimension.
+            n_nonconvergences_allowed: The number of nonconvergences allowed in a batch. If this number is exceeded, the loss returned will just be 0 (and hence do nothing when backward is called).
+            throw_exception_if_exceeded: If True, an exception will be thrown if the number of nonconvergences is exceeded.
+        """
+        super().__init__()
+        self.reduction = reduction
+        self.n_nonconvergences_allowed = n_nonconvergences_allowed
+        self.throw_exception_if_exceeded = throw_exception_if_exceeded
+        self.num_batch_dimensions = num_batch_dimensions
+
+    def forward(self, per_sample_loss: torch.Tensor, status: torch.Tensor) -> torch.Tensor:
+        """
+        Parameters:
+            per_sample_loss: The per_sample_loss.
+            status: The status of the MPC solution, of same shape as the per_sample loss for the first how_many_batch_dimensions and afterwards one integer dimension, containing whether the solution converged (0 means converged, all other integers count as not converged).
+        """
+        if per_sample_loss.shape[:self.num_batch_dimensions] != status.shape[:self.num_batch_dimensions]:
+            raise ValueError(
+                "The per_sample_loss and status must have the same batch dimensions.")
+        if len(status.shape) != self.num_batch_dimensions + 1:
+            raise ValueError(
+                "The status must have a shape corresponding to the number of batch dimensions, followed by one dimension containing the status.")
+        if status.shape[-1] != 1:
+            raise ValueError("The last dimension of status must be of size 1, containing the status of each sample.")
+
+        error_mask = status.to(dtype=torch.bool)
+        nonconvergent_samples = torch.sum(error_mask)
+
+        if nonconvergent_samples > self.n_nonconvergences_allowed:
+            if self.throw_exception_if_exceeded:
+                raise ValueError(
+                    f"Number of nonconvergences exceeded the allowed number of {self.n_nonconvergences_allowed}.")
+            return torch.zeros(1)
+
+        cleansed_loss = per_sample_loss.clone()
+        cleansed_loss[error_mask.squeeze()] = 0
+        if self.reduction == "mean":
+            cleansed_loss = torch.mean(cleansed_loss)
+            batch_size = math.prod(per_sample_loss.shape[:self.num_batch_dimensions])
+            # We have to adjust the meaned loss by the cleansed samples
+            result = cleansed_loss * batch_size / (batch_size - nonconvergent_samples)
+        elif self.reduction == "sum":
+            result = torch.sum(cleansed_loss)
+        elif self.reduction == "none":
+            result = cleansed_loss
+        else:
+            raise ValueError("Reduction must be either 'mean', 'sum' or 'none'.")
+        return result

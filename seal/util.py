@@ -97,3 +97,8 @@ class AcadosFileManager:
     def __del__(self):
         if self.cleanup:
             shutil.rmtree(self.export_directory, ignore_errors=True)
+
+
+class FakeListAlwaysReturnsNone:
+    def __getitem__(self, idx) -> None:
+        return None

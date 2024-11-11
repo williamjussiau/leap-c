@@ -1,182 +1,155 @@
 from abc import ABC
 from copy import deepcopy
-from dataclasses import dataclass
-from functools import cached_property, partial
+from functools import cached_property
 from pathlib import Path
-from typing import Iterable, NamedTuple
+from typing import Callable, List, NamedTuple
 
 import casadi as ca
 import numpy as np
 from acados_template import AcadosOcp, AcadosOcpSolver
-from acados_template.acados_ocp_iterate import AcadosOcpIterate
+from acados_template.acados_ocp_iterate import (
+    AcadosOcpFlattenedIterate,
+    AcadosOcpIterate,
+)
 
 from seal.util import AcadosFileManager
 
+# def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
+#     for stage in range(0, ocp_solver.acados_ocp.dims.N + 1):  # type:ignore
+#         ocp_solver.cost_set(stage, "scaling", discount_factor**stage)
+
+
+class MPCParameter(NamedTuple):
+    """
+    A named tuple to store the parameters of the MPC planner.
+
+    Attributes:
+        p_global: The part of p_global that should be learned in shape (n_p_global_learnable, ) or (B, n_p_global_learnable).
+        p_stagewise: The stagewise parameters in shape
+            (N+1, p_stagewise_dim) or (N+1, len(p_stagewise_sparse_idx)) if the next field is set or
+            (B, N+1, p_stagewise_dim) or (B, N+1, len(p_stagewise_sparse_idx)) if the next field is set.
+            If a multi-phase MPC is used this is a list containing the above arrays for the respective phases.
+        p_stagewise_sparse_idx: If not None, stagewise parameters are set in a sparse manner, using these indices.
+            The indices are in shape (N+1, n_p_stagewise_sparse_idx) or (B, N+1, n_p_stagewise_sparse_idx).
+            If a multi-phase MPC is used this is a list containing the above arrays for the respective phases.
+    """
+
+    p_global: np.ndarray | None = None
+    p_stagewise: List[np.ndarray] | np.ndarray | None = None
+    p_stagewise_sparse_idx: List[np.ndarray] | np.ndarray | None = None
+
+
+MPCState = AcadosOcpFlattenedIterate
+
+
+class MPCInput(NamedTuple):
+    """
+    A named tuple to store the input of the MPC planner.
+
+    Attributes:
+        x0: The initial states in shape (B, x_dim) or (x_dim, ).
+        u0: The initial actions in shape (B, u_dim) or (u_dim, ).
+        parameters: The parameters of the MPC planner.
+    """
+
+    x0: np.ndarray
+    u0: np.ndarray | None = None
+    parameters: MPCParameter | None = None
+
+
+class MPCOutput(NamedTuple):
+    """
+    A named tuple to store the solution of the MPC planner.
+
+    Attributes:
+        status: The status of the solver.
+        u_star: The optimal control actions of the horizon.
+        x_star: The optimal states of the horizon.
+        Q: The state-action value function.
+        V: The value function.
+        dvalue_du0: The sensitivity of the value function with respect to the initial action.
+        dvalue_dp_global: The sensitivity of the value function with respect to the global parameters.
+        du0_dp_global: The sensitivity of the initial action with respect to the global parameters.
+        du0_dx0: The sensitivity of the initial action with respect to the initial state.
+    """
+
+    status: np.ndarray | None = None
+    u_star: np.ndarray | None = None  # (B, N, u_dim) or (N, u_dim)
+    x_star: np.ndarray | None = None  # (B, N+1, x_dim)  or (N+1, x_dim)
+    Q: np.ndarray | None = None  # (B, ) or (1, )
+    V: np.ndarray | None = None  # (B, ) or (1, )
+    # dvaluedx0: np.ndarray  # (B, x_dim) or (x_dim, )  could be added in the future, because it is for free
+    dvalue_du0: np.ndarray | None = None  # (B, u_dim) or (u_dim, )
+    dvalue_dp_global: np.ndarray | None = None  # (B, p_dim) or (p_dim, )
+    du0_dp_global: np.ndarray | None = None  # (B, udim, p_dim) or (udim, p_dim)
+    du0_dx0: np.ndarray | None = None  # (B, u_dim, x_dim) or (u_dim, x_dim)
+
+
+def initialize_ocp_solver(
+    ocp_solver: AcadosOcpSolver,
+    mpc_parameter: MPCParameter | None,
+    ocp_iterate: AcadosOcpIterate | AcadosOcpFlattenedIterate | None,
+) -> None:
+    """Initializes the fields of the OCP solvers with the given values.
+
+    Args:
+        mpc_parameter: The parameters to set in the OCP solver.
+        acados_ocp_iterate: The iterate of the solver to use as initialization.
+    """
+
+    if mpc_parameter is not None:
+        if mpc_parameter.p_global is not None:
+            ocp_solver.set_p_global_and_precompute_dependencies(mpc_parameter.p_global)
+
+        if mpc_parameter.p_stagewise is not None:
+            if mpc_parameter.p_stagewise_sparse_idx is not None:
+                for stage, (p, idx) in enumerate(
+                    zip(
+                        mpc_parameter.p_stagewise,
+                        mpc_parameter.p_stagewise_sparse_idx,
+                    )
+                ):
+                    ocp_solver.set_params_sparse(stage, p, idx)
+            else:
+                for stage, p in enumerate(mpc_parameter.p_stagewise):
+                    ocp_solver.set(stage, "p", p)
+
+    if isinstance(ocp_iterate, AcadosOcpIterate):
+        ocp_solver.load_iterate_from_obj(ocp_iterate)
+    elif isinstance(ocp_iterate, AcadosOcpFlattenedIterate):
+        ocp_solver.load_iterate_from_flat_obj(ocp_iterate)
+
+
+def set_ocp_solver_initial_control_constraints(
+    ocp_solver: AcadosOcpSolver, u0: np.ndarray
+) -> None:
+    """Set the initial control constraints of the OCP solver to the given value."""
+    ocp_solver.set(0, "u", u0)
+    ocp_solver.constraints_set(0, "lbu", u0)
+    ocp_solver.constraints_set(0, "ubu", u0)
+
+
+def unset_ocp_solver_initial_control_constraints(ocp_solver: AcadosOcpSolver) -> None:
+    """Unset the initial control constraints of the OCP solver."""
+    ocp_solver.constraints_set(0, "lbu", ocp_solver.acados_ocp.constraints.lbu)  # type: ignore
+    ocp_solver.constraints_set(0, "ubu", ocp_solver.acados_ocp.constraints.ubu)  # type: ignore
+
 
 def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
-    for stage in range(0, ocp_solver.acados_ocp.dims.N + 1):  # type:ignore
+    for stage in range(ocp_solver.acados_ocp.solver_options.N_horizon + 1):  # type: ignore
         ocp_solver.cost_set(stage, "scaling", discount_factor**stage)
 
-class Parameter(NamedTuple):
-    """
-    It is not possible to set only an incomplete part of p_global: 
-    If some information for p_global is given, all information for p_global should be explicitly given.
-    
-    Parameters:
-    p_global_learnable: The part of p_global that should be learned in shape (n_p_global_learnable, ).
-    p_global_non_learnable: The part of p_global that should not be learned in shape (n_p_global_non_learnable, ).
-    p_stagewise: The stagewise parameters in shape (N+1, p_stagewise_dim) or (N+1, len(p_stagewise_sparse_idx)) if the next field is set.
-    p_stagewise_sparse_idx: If not None, stagewise parameters are set in a sparse manner, using these indices. 
-    """
-    p_global_learnable: np.ndarray | None  # Not yet with batch dim. 
-    p_global_non_learnable: np.ndarray | None  # Not yet with batch dim 
-    p_stagewise: np.ndarray | None  # Not yet with batch dim
-    p_stagewise_sparse_idx: np.ndarray | None  # Not yet with batch dim
-
-class ParameterManager():
-    """Class to manage the parameters of the ocp solver, i.e., which parameters are learnable, where the indices are, etc.."""
-    
-    def __init__(self, global_param_labels_to_idx: list[tuple[str, int, int, str]]):
-        """
-        Parameters:
-        param_labels_to_idx: A list containing for all parameters a tuple containing the parameter label name, the start and stop indices of the parameter in the parameter vector and an identifier, either "global_learnable" or "global_non_learnable".
-        global_param_labels_to_learn: A list of the parameter labels where the sensitivities can be computed. Those parameters are always expected to be in order of this list.
-        """
-        self.global_param_labels_to_info = global_param_labels_to_idx
-        self._run_sanity_check_on_global_param_labels_to_info()
-        
-    @cached_property
-    def slice_for_dudp_global_learnable(self) -> list[int]:
-        """Slice for transforming the sensitivities du/dp_global to du/dp_global_learnable."""
-        return self._calculate_slice_dudp()
-    
-    @property
-    def p_global_dim(self) -> int:
-        """Return the dimension of p_global."""
-        return self.global_param_labels_to_info[-1][2]
-    
-    def set_parameters_in_ocp_solver(self, ocp_solvers: list[AcadosOcpSolver], param: Parameter):
-        """Set the given parameters in the given ocp_solver. 
-        It is not possible to set only an incomplete part of p_global: 
-        If some information for p_global is given, all information for p_global should be explicitly given.
-        """
-        p_global_learnable, p_global_non_learnable, p_stagewise, p_stagewise_sparse_idx = param
-        
-        if p_global_learnable is not None or p_global_non_learnable is not None:
-            if p_global_non_learnable is None:
-                p_global_non_learnable = np.array([])
-            if p_global_learnable is None:
-                p_global_learnable = np.array([])
-            p_global = self._merge_learnable_and_not_learnable_to_p_global(p_global_learnable, p_global_non_learnable)
-            for ocp_solver in ocp_solvers:
-                ocp_solver.set_p_global_and_precompute_dependencies(p_global)
-        
-        if p_stagewise is not None:
-            for ocp_solver in ocp_solvers:
-                self._set_p_stagewise(ocp_solver, p_stagewise, p_stagewise_sparse_idx)
-            
-    
-    def _merge_learnable_and_not_learnable_to_p_global(self, parameters_to_learn: np.ndarray, non_learnable_parameters: np.ndarray) -> np.ndarray:
-        """
-        Merge the learnable and non-learnable parameters to the global parameter vector. Both are expected to be given in the same order as the labels.
-
-        Args:
-            parameters_to_learn: Learnable parameters, shape (n_learnable_parameters,).
-            non_learnable_parameters: Non-learnable parameters, shape (n_non_learnable_parameters,).
-
-        Returns:
-            p_global: A new numpy array of shape (n_global_parameters,) containing the learnable and non-learnable parameters mapped according to the order of labels.
-        """
-        p_global = np.zeros((parameters_to_learn.shape[0] + non_learnable_parameters.shape[0]))
-        if p_global.size < self.p_global_dim:
-            raise ValueError("It is not possible to provide only a part of p_global, all information for p_global should be explicitly given.")
-        learn_idx = 0
-        non_learn_idx = 0
-        for i, info in enumerate(self.global_param_labels_to_info):
-            _, start, stop, identifier = info
-            length = stop - start
-            if identifier == "global_learnable":
-                p_global[start:stop] = parameters_to_learn[learn_idx:learn_idx + length]
-                learn_idx += length
-            elif identifier == "global_non_learnable":
-                p_global[start:stop] = non_learnable_parameters[non_learn_idx:non_learn_idx + length]
-                non_learn_idx += length
-            else:
-                raise ValueError(f"Unknown identifier {identifier}.")
-        if learn_idx != parameters_to_learn.shape[0]:
-            raise ValueError("Not all learnable parameters were used. The given learnable parameter array is inconsistent with the global parameter info dict..")
-        if non_learn_idx != non_learnable_parameters.shape[0]:
-            raise ValueError("Not all non-learnable parameters were used. The given non-learnable parameter array is inconsistent with the global parameter info dict.")
-        return p_global
-    
-    def _run_sanity_check_on_global_param_labels_to_info(self):
-        """Check if the global_param_labels_to_info is valid."""
-        previous_stop = 0
-        for label, start, stop, identifier in self.global_param_labels_to_info:
-            if start >= stop:
-                raise ValueError(f"Invalid indices {start} and {stop} for parameter {label}.")
-            if start != previous_stop:
-                raise ValueError(f"Indices for parameter {label} are not continuing where the last label left off.")
-            if identifier not in ["global_learnable", "global_non_learnable"]:
-                raise ValueError(f"Unknown identifier {identifier}.")
-            previous_stop = stop
-         
-    def _calculate_slice_dudp(self) -> list[int]:
-        indices = []
-        for info in self.global_param_labels_to_info:
-            _, start, stop, identifier = info
-            if identifier == "global_learnable":
-                indices.extend(list(range(start, stop)))
-        return indices
-    
-    def _get_p_stagewise(self, ocp_solver: AcadosOcpSolver, stages: Iterable[int]) -> np.ndarray:
-        """
-        Obtain the value of the stagewise parameters in shape (len(stages), p_stagewise_dim) from the solver.
-        """
-        params = []
-        for stage in stages:
-            params.append(ocp_solver.get(stage, "p"))
-        return np.stack(params, axis=0)
-
-    def _set_p_stagewise(self, ocp_solver: AcadosOcpSolver, p_stagewise: np.ndarray, p_stagewise_sparse_idx: np.ndarray | None) -> None:
-        """Set p_stagewise in the respective solver."""
-        if p_stagewise_sparse_idx is not None:
-            for stage, val in enumerate(p_stagewise):            
-                ocp_solver.set_params_sparse(stage, p_stagewise_sparse_idx, p_stagewise)
-        else:
-            for stage, val in enumerate(p_stagewise):
-                ocp_solver.set(stage, "p", val)
-
-
-@dataclass
-class SolverState:
-    """Glorified dictionary used for initializing the MPC before solving the problem.
-    Every field that is not None will be used for the initialization in the initialize method of the MPC class.
-    NOTE: The acados iterate contains fields that will be overwritten by the fields in this class (e.g. x_traj), if provided.
-    NOTE: Can be extend by other fields (e.g. duals) if needed.
-    
-    Parameters:
-        acados_iterate: The iterate of the acados solver.
-        x_traj: The state trajectory of shape (mpc.N+1, x_dim).
-        u_traj: The action trajectory of shape (mpc.N, u_dim).
-    """
-    acados_ocp_iterate: AcadosOcpIterate | None = None
-    x_traj: np.ndarray | None = None
-    u_traj: np.ndarray | None = None
 
 class MPC(ABC):
-    """
-    MPC abstract base class.
-    """
-    
+    """MPC abstract base class."""
 
     def __init__(
         self,
         ocp: AcadosOcp,
-        global_param_labels_to_info: list[tuple[str, int, int, str]],
         discount_factor: float | None = None,
         export_directory: Path | None = None,
         export_directory_sensitivity: Path | None = None,
+        ocp_solver_backup_fn: Callable | None = None,
         cleanup: bool = True,
     ):
         """
@@ -184,15 +157,14 @@ class MPC(ABC):
 
         Args:
             ocp: Optimal control problem.
-            global_param_labels_to_info: A list containing for all parameters a tuple containing the parameter label name, the start and stop indices of the parameter in the parameter vector and an identifier, either "global_learnable" or "global_non_learnable"
             discount_factor: Discount factor. If None, acados default cost scaling is used, i.e. dt for intermediate stages, 1 for terminal stage.
             export_directory: Directory to export the generated code.
             export_directory_sensitivity: Directory to export the generated
                 code for the sensitivity problem.
+            ocp_solver_backup_fn: A function that returns a backup ocp solver iterate to be used in case the solver fails.
             cleanup: Whether to clean up the export directory on exit or
                 when the object is deleted.
         """
-
         self.ocp = ocp
 
         # setup OCP for sensitivity solver
@@ -202,469 +174,328 @@ class MPC(ABC):
         self.ocp_sensitivity.solver_options.globalization_fixed_step_length = 0.0
         self.ocp_sensitivity.solver_options.nlp_solver_max_iter = 1
         self.ocp_sensitivity.solver_options.qp_solver_iter_max = 200
-        self.ocp_sensitivity.solver_options.tol = self.ocp.solver_options.tol/1e3
+        self.ocp_sensitivity.solver_options.tol = self.ocp.solver_options.tol / 1e3
         self.ocp_sensitivity.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
         self.ocp_sensitivity.solver_options.qp_solver_ric_alg = 1
-        self.ocp_sensitivity.solver_options.qp_solver_cond_N = self.ocp.solver_options.N_horizon
+        self.ocp_sensitivity.solver_options.qp_solver_cond_N = (
+            self.ocp.solver_options.N_horizon
+        )
         self.ocp_sensitivity.solver_options.hessian_approx = "EXACT"
         self.ocp_sensitivity.solver_options.with_solution_sens_wrt_params = True
         self.ocp_sensitivity.solver_options.with_value_sens_wrt_params = True
 
         # path management
-        afm = AcadosFileManager(export_directory, cleanup)
-        afm_sens = AcadosFileManager(export_directory_sensitivity, cleanup)
+        self.afm = AcadosFileManager(export_directory, cleanup)
+        self.afm_sens = AcadosFileManager(export_directory_sensitivity, cleanup)
 
-        # setup ocp solvers, we make the creation lazy
-        self._ocp_solver_fn = partial(afm.setup_acados_ocp_solver, ocp)
-        self._ocp_sensitivity_solver_fn = partial(afm_sens.setup_acados_ocp_solver, self.ocp_sensitivity)
-        self._ocp_solver = None
-        self._ocp_sensitivity_solver = None
-        
-        self._parameter_manager = ParameterManager(global_param_labels_to_info)
+        self._discount_factor = discount_factor
 
-        self.__parameter_values = np.array([])
-        self.__p_global_values = np.array([])
-        self.__discount_factor = None
+        self.ocp_solver_backup_fn = ocp_solver_backup_fn
 
-        if discount_factor is not None:
-            self.discount_factor = discount_factor # this will overwrite the acados cost scaling
+        # constraints and cost functions
+        self._h_fn = None
+        self._cost_fn = None
 
-    @property
+    @cached_property
     def ocp_solver(self) -> AcadosOcpSolver:
-        if self._ocp_solver is None:
-            self._ocp_solver = self._ocp_solver_fn()
-        return self._ocp_solver
+        solver = self.afm.setup_acados_ocp_solver(self.ocp)
 
-    @property
+        if self._discount_factor is not None:
+            set_discount_factor(solver, self._discount_factor)
+
+        return solver
+
+    @cached_property
     def ocp_sensitivity_solver(self) -> AcadosOcpSolver:
-        if self._ocp_sensitivity_solver is None:
-            self._ocp_sensitivity_solver = self._ocp_sensitivity_solver_fn()
-        return self._ocp_sensitivity_solver
+        solver = self.afm_sens.setup_acados_ocp_solver(self.ocp_sensitivity)
+
+        if self._discount_factor is not None:
+            set_discount_factor(solver, self._discount_factor)
+
+        return solver
 
     @property
     def N(self) -> int:
-        return self.ocp_solver.acados_ocp.solver_options.N_horizon  # type: ignore
+        return self.ocp.solver_options.N_horizon  # type: ignore
 
     @property
-    def p_global_dim(self) -> int:
-        return self._parameter_manager.p_global_dim
+    def default_p_global(self) -> np.ndarray | None:
+        """Return the dimension of p_global."""
+        return self.ocp.p_global_values if self.ocp.model.p_global is not None else None
 
     @property
-    def p_global_values(self) -> np.ndarray:
-        return self.ocp.p_global_values
+    def default_p_stagewise(self) -> np.ndarray | None:
+        """Return the dimension of p_stagewise."""
+        return self.ocp.parameter_values if self.ocp.model.p is not None else None
 
-    @property
-    def discount_factor(self) -> float:
-        return self.__discount_factor
-
-
-    @p_global_values.setter
-    def p_global_values(self, p_global_values):
-        if isinstance(p_global_values, np.ndarray):
-            p_global_values = p_global_values.reshape(-1)
-            self.ocp.p_global_values = p_global_values
-            self.ocp_sensitivity.p_global_values = p_global_values
-            self.ocp_solver.set_p_global_and_precompute_dependencies(p_global_values)
-            self.ocp_sensitivity_solver.set_p_global_and_precompute_dependencies(p_global_values)
-        else:
-            raise Exception("Invalid p_global_values value. " + f"Expected numpy array, got {type(p_global_values)}.")
-
-
-    @discount_factor.setter
-    def discount_factor(self, discount_factor):
+    def state_value(
+        self, state: np.ndarray, p_global: np.ndarray | None, sens: bool = False
+    ) -> np.ndarray:
         """
-        Set the discount factor. This overwrites the scaling of the cost function (control interval length by default).
-        """
-
-        if isinstance(discount_factor, float) and discount_factor > 0 and discount_factor <= 1:
-            print(f"Setting discount factor to {discount_factor}.")
-            self.__discount_factor = discount_factor
-
-            MPC.__set_discount_factor(self.ocp_solver, discount_factor)
-            MPC.__set_discount_factor(self.ocp_sensitivity_solver, discount_factor)
-        else:
-            raise Exception("Invalid discount_factor value. " + f"Expected float in (0, 1], got {discount_factor}.")
-
-
-    def get_action(self, x0: np.ndarray) -> np.ndarray:
-        """
-        Update the solution of the OCP solver.
+        Compute the value function for the given state.
 
         Args:
-            x0: Initial state.
+            state: The state for which to compute the value function.
 
         Returns:
-            u: Optimal control action.
-        """
-        # Set initial state
-        self.ocp_solver.set(0, "lbx", x0)
-        self.ocp_solver.set(0, "ubx", x0)
-
-        # Solve the optimization problem
-        self.status = self.ocp_solver.solve()
-
-        # Get solution
-        action = self.ocp_solver.get(0, "u")
-
-        # Scale to [-1, 1] for gym
-        # action = self.scale_action(action)
-
-        return action
-
-
-    def q_update(self, x0: np.ndarray, u0: np.ndarray, p: np.ndarray | None = None) -> int:
-        """
-        Update the solution of the OCP solver.
-
-        Args:
-            x0: Initial state.
-
-        Returns:
-            status: Status of the solver.
+            The value function.
         """
 
-        # Set initial action (needed for state-action value)
-        self.ocp_solver.set(0, "u", u0)
+        mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
+        mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
-        self.ocp_solver.constraints_set(0, "lbu", u0)
-        self.ocp_solver.constraints_set(0, "ubu", u0)
+        return mpc_output.V, mpc_output.dvalue_dp_global
 
-        optimal_value, optimal_value_gradient = self.v_update(x0, p)
-
-        # Change bounds back to original
-        self.ocp_solver.constraints_set(0, "lbu", self.ocp_solver.acados_ocp.constraints.lbu)
-        self.ocp_solver.constraints_set(0, "ubu", self.ocp_solver.acados_ocp.constraints.ubu)
-
-        return optimal_value, optimal_value_gradient
-
-    def v_update(self, x0: np.ndarray, p: np.ndarray | None = None) -> int:
-        if p is not None:
-            self.p_global_values = p
-
-        # Set initial state
-        self.ocp_solver.set(0, "lbx", x0)
-        self.ocp_solver.set(0, "ubx", x0)
-
-        # Set p_global
-        self.ocp_solver.set_p_global_and_precompute_dependencies(self.p_global_values)
-
-        # Solve the optimization problem
-        status = self.ocp_solver.solve()
-
-        optimal_value = self.ocp_solver.get_cost()
-
-        if status != 0:
-            raise RuntimeError(f"Solver failed with status {status}. Exiting.")
-
-        optimal_value_gradient = self.ocp_solver.eval_and_get_optimal_value_gradient(with_respect_to="p_global")
-
-        return optimal_value, optimal_value_gradient
-
-    def pi_update(
+    def state_action_value(
         self,
-        x0: np.ndarray,
-        p: Parameter,
-        initialization: SolverState | None = None,
-        return_dudp: bool = True,
-        return_dudx: bool = False,
-    ) -> tuple[np.ndarray, int, tuple[np.ndarray | None, np.ndarray | None]]:
-        """Solves the OCP for the initial state x0 and learnable parameters p
-        and returns the first action of the horizon, as well as
-        the sensitivity of said action with respect to the parameters
-        and the status of the solver.
-
-        Parameters:
-            x0: Initial state.
-            p: Parameter class to set the parameters. For more info see the description of the Parameter class.
-            initialization: The MPCInitInfo object to use for initialization. For more info see the description of the MPCInitInfo class.
-            return_dudp: Whether to return the sensitivity of the action with respect to the parameters.
-            return_dudx: Whether to return the sensitivity of the action with respect to the state.
-        Returns:
-        A tuple containing in order:
-            u: The first action of the (solution) horizon.
-            status: The acados status of the solve.
-            sensitivities: A tuple with two entries, containing du/dp_learnable in the first entry (or None if not requested) and du/dx in the second entry (or None if not requested).
+        state: np.ndarray,
+        action: np.ndarray,
+        p_global: np.ndarray | None,
+        sens: bool = False,
+    ) -> np.ndarray:
         """
-        self.init_solvers(p, initialization)
-
-        # Solve the optimization problem for initial state x0
-        pi = self.ocp_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=True)
-        status = self.ocp_solver.get_status()
-
-        # TODO: Should everything below be moved to get_dpi_dp? Or should get_dpi_dp be removed?
-        # Transfer the iterate to the sensitivity solver
-        iterate = self.ocp_solver.store_iterate_to_flat_obj()
-        self.ocp_sensitivity_solver.load_iterate_from_flat_obj(iterate)
-
-        # Call the sensitivity solver to prepare the sensitivity calculations
-        self.ocp_sensitivity_solver.solve_for_x0(x0, fail_on_nonzero_status=False, print_stats_on_failure=False)
-
-        # Calculate the policy gradient
-        if return_dudp:
-            _, dpidp = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "p_global")
-        else:
-            dpidp = None
-
-        if return_dudx:
-            _, dpidx = self.ocp_sensitivity_solver.eval_solution_sensitivity(0, "initial_state")
-        else:
-            dpidx = None
-
-        return pi, status, (dpidp, dpidx)  # type:ignore
-
-    def init_solvers(self, p: Parameter | None, initialization: SolverState | None):
-        """Initializes the fields of the OCP solvers with the given values.
-        Parameters:
-            p: The parameters to set in the OCP solver. See description of the Parameter class for more details.
-            initialization: See description of the MPCInitInfo class for more details. 
-        """
-        if p is not None:
-            self._parameter_manager.set_parameters_in_ocp_solver([self.ocp_solver, self.ocp_sensitivity_solver], p)
-        if initialization is not None:
-            if initialization.x_traj is not None:
-                for stage, val in enumerate(initialization.x_traj):
-                    self.ocp_solver.set(stage, "x", val)
-                    self.ocp_sensitivity_solver.set(stage, "x", val)
-            if initialization.u_traj is not None:
-                values = initialization.u_traj
-                for stage in range(self.N):  # Setting u is not possible in the terminal stage.
-                    self.ocp_solver.set(stage, "u", values[stage])
-                    self.ocp_sensitivity_solver.set(stage, "u", values[stage])
-        
-    def slice_dudp_global_to_dudp_global_learnable(self, dudp: np.ndarray) -> np.ndarray:
-        """Slice the sensitivity du/dp_global to du/dp_global_learnable. Assumes the parameter dimension is the last dimension."""
-        return dudp[..., self._parameter_manager.slice_for_dudp_global_learnable]
-        
-    def get_dV_dp(self) -> float:
-        """
-        Get the value of the sensitivity of the value function with respect to the parameters.
-
-        Assumes OCP is solved for state and parameters.
-
-        Returns:
-            dV_dp: Sensitivity of the value function with respect to the parameters.
-        """
-        return self.get_dL_dp()
-
-    def get_Q(self) -> float:
-        """
-        Get the value of the state-action value function.
-
-        Assumes OCP is solved for state and action.
-
-        Returns:
-            Q: State-action value function.
-        """
-        return self.ocp_solver.get_cost()
-
-    def get_dQ_dp(self) -> float:
-        """
-        Get the value of the sensitivity of the state-action value function with respect to the parameters.
-
-        Assumes OCP is solved for state, action and parameters.
-
-        Returns:
-            dQ_dp: Sensitivity of the state-action value function with respect to the parameters.
-        """
-        # TODO: Implement this
-        pass
-
-    # def get_parameter_labels(self) -> list:
-    #     return get_parameter_labels(self.ocp_solver.acados_ocp)
-
-    # def get_state_labels(self) -> list:
-    #     return get_state_labels(self.ocp_solver.acados_ocp)
-
-    # def get_input_labels(self) -> list:
-    #     return get_input_labels(self.ocp_solver.acados_ocp)
-
-    def update(self, x0: np.ndarray) -> int:
-        """
-        Update the solution of the OCP solver.
+        Compute the state-action value function for the given state and action.
 
         Args:
-            x0: Initial state.
+            state: The state for which to compute the value function.
+            action: The action for which to compute the value function.
 
         Returns:
-            status: Status of the solver.
+            The state-action value function.
         """
-        # Set initial state
-        self.ocp_solver.set(0, "lbx", x0)
-        self.ocp_solver.set(0, "ubx", x0)
 
-        # Solve the optimization problem
-        status = self.ocp_solver.solve()
+        mpc_input = MPCInput(
+            x0=state, u0=action, parameters=MPCParameter(p_global=p_global)
+        )
+        mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
-        if status != 0:
-            raise RuntimeError(f"Solver failed update with status {status}. Exiting.")
+        return mpc_output.Q, mpc_output.dvalue_dp_global
 
-        # test_nlp_sanity(self.nlp)
+    def policy(
+        self,
+        state: np.ndarray,
+        p_global: np.ndarray | None,
+        sens: bool = False,
+    ) -> np.ndarray:
+        """
+        Compute the policy for the given state.
 
-        return status
+        Args:
+            state: The state for which to compute the policy.
 
-    def reset(self, x0: np.ndarray):
-        self.ocp_solver.reset()
+        Returns:
+            The policy.
+        """
 
-        for stage in range(self.ocp_solver.acados_ocp.solver_options.N_horizon + 1):
-            # self.ocp_solver.set(stage, "x", self.ocp_solver.acados_ocp.constraints.lbx_0)
-            self.ocp_solver.set(stage, "x", x0)
-            self.ocp_sensitivity_solver.set(stage, "x", x0)
+        mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
 
-    def set(self, stage, field, value):
-        if field == "p":
-            # TODO: Implement this
-            pass
+        mpc_output, _ = self.__call__(mpc_input=mpc_input, dudp=sens)
 
-            # p_temp = self.nlp.p.sym(value)
-            # This allows to set parameters in the NLP but not in the OCP solver. This can be a problem.
-            # for key in p_temp.keys():
-            #     self.nlp.set_parameter(key, p_temp[key])
+        return mpc_output.u_star[0], mpc_output.du0_dp_global
 
-            # if self.ocp_solver.acados_ocp.dims.np > 0:
-            #     self.ocp_solver.set(stage, field, p_temp["model"].full().flatten())
+    def __call__(
+        self,
+        mpc_input: MPCInput,
+        mpc_state: list[MPCState] | MPCState | None = None,
+        dudx: bool = False,
+        dudp: bool = False,
+        dvdp: bool = False,
+    ) -> tuple[MPCOutput, MPCState | list[MPCState]]:
+        """
+        Solve the OCP for the given initial state and parameters.
 
-            # if self.nlp.vars.val["p", "W_0"].shape[0] > 0:
-            #     p_temp = self.nlp.vars.sym(0)
-            #     self.ocp_solver.cost_set
-            #     # self.nlp.set(stage, field, value)
-            #     W_0 = self.nlp.vars.val["p", "W_0"].full()
-            #     print("Not implemented")
+        Args:
+            mpc_input: The input of the MPC controller.
+            mpc_state: The iterate of the solver to use as initialization.
+            dudx: Whether to compute the sensitivity of the action with respect to the state.
+            dudp: Whether to compute the sensitivity of the action with respect to the parameters.
+            dvdp: Whether to compute the sensitivity of the value function with respect to the parameters.
 
+        Returns:
+            mpc_output: The output of the MPC controller.
+            mpc_state: The iterate of the solver.
+        """
+
+        if mpc_input.x0.ndim == 1:
+            return self._solve(
+                mpc_input=mpc_input,
+                mpc_state=mpc_state,  # type: ignore
+                dudx=dudx,
+                dudp=dudp,
+                dvdp=dvdp,
+            )
+
+        return self._batch_solve(
+            mpc_input=mpc_input,
+            mpc_state=mpc_state,  # type: ignore
+            dudx=dudx,
+            dudp=dudp,
+            dvdp=dvdp,
+        )
+
+    def _solve(
+        self,
+        mpc_input: MPCInput,
+        mpc_state: MPCState | None = None,
+        dudx: bool = False,
+        dudp: bool = False,
+        dvdp: bool = False,
+    ) -> tuple[MPCOutput, MPCState]:
+        # initialize solvers
+        if mpc_input is not None:
+            initialize_ocp_solver(self.ocp_solver, mpc_input.parameters, mpc_state)
+            initialize_ocp_solver(
+                self.ocp_sensitivity_solver, mpc_input.parameters, mpc_state
+            )
+
+        # set initial control constraints
+        if mpc_input.u0 is not None:
+            set_ocp_solver_initial_control_constraints(self.ocp_solver, mpc_input.u0)
+
+        # solve
+        kw = {}
+
+        # TODO: Cover case where we do not want to do a forward evaluation
+        kw["u_star"] = self.ocp_solver.solve_for_x0(
+            mpc_input.x0, fail_on_nonzero_status=False
+        )
+
+        if self.ocp_solver.status != 0:
+            raise Exception(
+                f"Solver failed with status {self.ocp_solver.status} for x0 {mpc_input.x0}."
+            )
+
+        if dudx:
+            kw["du0_dx0"] = self.ocp_solver.eval_solution_sensitivity(
+                stages=[0], with_respect_to="initial_state"
+            )[1]
+
+        if dudp:
+            self.ocp_sensitivity_solver.load_iterate_from_flat_obj(
+                self.ocp_solver.store_iterate_to_flat_obj()
+            )
+
+            self.ocp_sensitivity_solver.solve_for_x0(
+                mpc_input.x0, fail_on_nonzero_status=False, print_stats_on_failure=False
+            )
+            kw["du0_dp_global"] = self.ocp_sensitivity_solver.eval_solution_sensitivity(
+                0, "p_global"
+            )[1]
+
+        if dvdp:
+            kw["dvalue_dp_global"] = (
+                self.ocp_solver.eval_and_get_optimal_value_gradient("p_global")
+            )
+        # unset initial control constraints
+        if mpc_input.u0 is not None:
+            kw["Q"] = self.ocp_solver.get_cost()
+            unset_ocp_solver_initial_control_constraints(self.ocp_solver)
         else:
-            self.ocp_solver.set(stage, field, value)
+            kw["V"] = self.ocp_solver.get_cost()
 
-    # def set_parameter(self, value_, api="new"):
-    #     p_temp = self.nlp.p.sym(value_)
+        # get mpc state
+        mpc_state = self.ocp_solver.store_iterate_to_flat_obj()
 
-    #     if "W_0" in p_temp.keys():
-    #         self.nlp.set_parameter("W_0", p_temp["W_0"])
-    #         self.ocp_solver.cost_set(
-    #             0, "W", self.nlp.get_parameter("W_0").full(), api=api
-    #         )
+        return MPCOutput(**kw), mpc_state
 
-    #     if "W" in p_temp.keys():
-    #         self.nlp.set_parameter("W", p_temp["W"])
-    #         for stage in range(1, self.ocp_solver.acados_ocp.solver_options.N_horizon):
-    #             self.ocp_solver.cost_set(
-    #                 stage, "W", self.nlp.get_parameter("W").full(), api=api
-    #             )
+    def _batch_solve(
+        self,
+        mpc_input: MPCInput,
+        mpc_state: list[MPCState] | None = None,
+        dudx: bool = False,
+        dudp: bool = False,
+        dvdp: bool = False,
+    ) -> tuple[MPCOutput, list[MPCState]]:
+        # get a single element from the batch
+        def get_idx(data, index):
+            if isinstance(data, tuple) and hasattr(data, "_fields"):  # namedtuple
+                elem_type = type(data)
+                return elem_type(*(get_idx(elem, index) for elem in data))  # type: ignore
 
-    #     if "yref_0" in p_temp.keys():
-    #         self.nlp.set_parameter("yref_0", p_temp["yref_0"])
-    #         self.ocp_solver.cost_set(
-    #             0, "yref", self.nlp.get_parameter("yref_0").full().flatten(), api=api
-    #         )
+            return None if data is None else data[index]
 
-    #     if "yref" in p_temp.keys():
-    #         self.nlp.set_parameter("yref", p_temp["yref"])
-    #         for stage in range(1, self.ocp_solver.acados_ocp.solver_options.N_horizon):
-    #             self.ocp_solver.cost_set(
-    #                 stage,
-    #                 "yref",
-    #                 self.nlp.get_parameter("yref").full().flatten(),
-    #                 api=api,
-    #             )
+        batch_size = mpc_input.x0.shape[0]
+        outputs = []
+        states = []
 
-    #     if self.ocp_solver.acados_ocp.dims.np > 0:
-    #         self.nlp.set_parameter("model", p_temp["model"])
-    #         for stage in range(self.ocp_solver.acados_ocp.solver_options.N_horizon + 1):
-    #             self.ocp_solver.set(stage, "p", p_temp["model"].full().flatten())
+        for idx in range(batch_size):
+            mpc_output, mpc_state = self._solve(
+                mpc_input=get_idx(mpc_input, idx),  # type: ignore
+                mpc_state=mpc_state[idx] if mpc_state is not None else None,
+                dudx=dudx,
+                dudp=dudp,
+                dvdp=dvdp,
+            )
 
-    @staticmethod
-    def __set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
-        for stage in range(ocp_solver.acados_ocp.solver_options.N_horizon + 1):
-            ocp_solver.cost_set(stage, "scaling", discount_factor**stage)
+            outputs.append(mpc_output)
+            states.append(mpc_state)
 
+        def collate(key):
+            value = getattr(outputs[0], key)
+            if value is None:
+                return value
+            return np.stack([getattr(output, key) for output in outputs])
 
-    def get(self, stage, field):
-        return self.ocp_solver.get(stage, field)
+        mpc_output = MPCOutput({key: collate(key) for key in MPCOutput._fields})  # type: ignore
 
-    # def scale_action(self, action: np.ndarray) -> np.ndarray:
-    #     """
-    #     Rescale the action from [low, high] to[-1, 1]
-    #     (no need for symmetric action space)
+        return mpc_output, states  # type: ignore
 
-    #     : param action: Action to scale
-    #     : return: Scaled action
-    #     """
-    #     low = self.ocp.constraints.lbu
-    #     high = self.ocp.constraints.ubu
-
-    #     return 2.0 * ((action - low) / (high - low)) - 1.0
-
-    # def unscale_action(self, action: np.ndarray) -> np.ndarray:
-    #     """
-    #     Rescale the action from [-1, 1] to[low, high]
-    #     (no need for symmetric action space)
-
-    #     : param action: Action to scale
-    #     : return: Scaled action
-    #     """
-    #     low = self.ocp_solver.acados_ocp.constraints.lbu
-    #     high = self.ocp_solver.acados_ocp.constraints.ubu
-
-    #     return 0.5 * (high - low) * (action + 1.0) + low
-
-    def get_dL_dp(self) -> np.ndarray:
+    def fetch_param(
+        self,
+        mpc_param: MPCParameter | None = None,
+        stage: int = 0,
+    ) -> tuple[None | np.ndarray, None | np.ndarray]:
         """
-        Get the value of the sensitivity of the Lagrangian with respect to the parameters.
+        Fetch the parameters for the given stage.
+
+        Args:
+            mpc_param: The parameters.
+            stage: The stage.
 
         Returns:
-            dL_dp: Sensitivity of the Lagrangian with respect to the parameters.
+            The parameters for the given stage.
         """
-        # TODO: Implement this or remove. Only need get_dV_dp and get_dQ_dp.
+        p_global = None
+        p_stage = None
 
-    def get_L(self) -> float:
-        """
-        Get the value of the Lagrangian.
+        if self.ocp.model.p_global is not None:
+            p_global = self.ocp.p_global_values
+        if self.ocp.model.p is not None:
+            p_stage = self.ocp.parameter_values
 
-        Returns:
-            L: Lagrangian.
-        """
-        # TODO: Implement this
+        if mpc_param is not None:
+            if mpc_param.p_global is not None:
+                p_global = mpc_param.p_global
 
-    def get_V(self) -> float:
-        """
-        Get the value of the value function.
+            if mpc_param.p_stagewise is not None:
+                if mpc_param.p_stagewise_sparse_idx is None:
+                    p_stage = mpc_param.p_stagewise[stage]
+                else:
+                    p_stage = p_stage.copy()
+                    p_stage[mpc_param.p_stagewise_sparse_idx[stage]] = (
+                        mpc_param.p_stagewise[stage]
+                    )
 
-        Assumes OCP is solved for state.
-
-        Returns:
-            V: Value function.
-        """
-        return self.ocp_solver.get_cost()
-
-    def get_pi(self) -> np.ndarray:
-        """
-        Get the value of the policy.
-
-        Assumes OCP is solved for state.
-        """
-        return self.ocp_solver.get(0, "u")
-
-    def get_dpi_dp(self) -> np.ndarray:
-        """
-        Get the value of the sensitivity of the policy with respect to the parameters.
-
-        Assumes OCP is solved for state and parameters.
-        """
-        raise NotImplementedError("This method is not implemented yet.")
-
-
-        # TODO: Implement this using ocp_sensitivity_solver
+        return p_global, p_stage
 
     def stage_cons(
         self,
         x: np.ndarray,
         u: np.ndarray,
-        p: np.ndarray,
+        p: MPCParameter | None = None,
     ) -> dict[str, np.ndarray]:
         """
         Get the value of the stage constraints.
 
+        Args:
+            x: State.
+            u: Control.
+            p: Parameters.
+
         Returns:
             stage_cons: Stage constraints.
         """
+        assert x.ndim == 1 and u.ndim == 1
 
         def relu(value):
             return value * (value > 0)
@@ -690,13 +521,19 @@ class MPC(ABC):
                 if self.ocp.model.p is not None:
                     inputs.append(self.ocp.model.p)  # type: ignore
 
+                if self.ocp.model.p_global is not None:
+                    inputs.append(self.ocp.model.p_global)
+
                 self._h_fn = ca.Function("h", inputs, [self.ocp.model.con_h_expr])
 
             inputs = [x, u]
-            if self.ocp.model.p:
-                # Todo (Jasper): Param update.
-                # p = self.fetch_params(mpc_input, stage=0)
-                inputs.append(p)  # type: ignore
+
+            p_global, p_stage = self.fetch_param(p)
+            if p_global is not None:
+                inputs.append(p_global)
+
+            if p_stage is not None:
+                inputs.append(p_stage)
 
             h = self._h_fn(*inputs)
             cons["lh"] = relu(self.ocp.constraints.lh - h)
@@ -710,13 +547,43 @@ class MPC(ABC):
         self,
         x: np.ndarray,
         u: np.ndarray,
-        p: np.ndarray,
-    ) -> dict[str, np.ndarray]:
+        p: MPCParameter | None = None,
+    ) -> float:
         """
         Get the value of the stage cost.
+
+        Args:
+            x: State.
+            u: Control.
+            p: Parameters.
 
         Returns:
             stage_cost: Stage cost.
         """
-        # TODO: Implement this
-        raise NotImplementedError()
+        assert self.ocp.cost.cost_type == "EXTERNAL"
+        assert x.ndim == 1 and u.ndim == 1
+
+        if self._cost_fn is None:
+            inputs = [self.ocp.model.x, self.ocp.model.u]
+
+            if self.ocp.model.p is not None:
+                inputs.append(self.ocp.model.p)
+
+            if self.ocp.model.p_global is not None:
+                inputs.append(self.ocp.model.p_global)
+
+            self._cost_fn = ca.Function(
+                "cost", inputs, [self.ocp.model.cost_expr_ext_cost]
+            )
+
+        inputs = [x, u]
+
+        p_global, p_stage = self.fetch_param(p)
+
+        if p_global is not None:
+            inputs.append(p_global)
+
+        if p_stage is not None:
+            inputs.append(p_stage)
+
+        return self._cost_fn(*inputs).full().item()  # type: ignore

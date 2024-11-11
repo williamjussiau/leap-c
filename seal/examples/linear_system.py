@@ -2,23 +2,38 @@
 linear system
 """
 
+from typing import Any
+
 import casadi as cs
 import numpy as np
-from acados_template import AcadosOcp
-from scipy import linalg
+from acados_template import AcadosModel, AcadosOcp
+from casadi.tools import entry, struct_symSX
 from scipy.linalg import solve_discrete_are
 
 from seal.mpc import MPC
-from seal.ocp_env import OCPEnv, ParamCreator
+from seal.ocp_env import OCPEnv
 
 
 class LinearSystemMPC(MPC):
-    """TODO: docstring for MPC."""
+    """MPC for a system with linear dynamics and quadratic cost functions.
+    The equations are given by:
+        Dynamics: x_next = Ax + Bu + b
+        Initial_Cost: V0
+        Stage_cost: J = 0.5 * (x'Qx + u'Ru + f'cat(x,u))
+        Terminal Cost: x'SOLUTION_ARE(Q,R)x
+        Hard constraints:
+            lbx = 0, -1
+            ubx = 1, 1
+            lbu = -1
+            ubu = 1
+        Slack:
+            Only the first entry of x; linear slack zl, zu = 1e2
+    """
 
     def __init__(
         self,
-        params: dict[str, np.ndarray] | None = None,
-        learnable_params: list[str] = [],
+        params: dict[str, np.ndarray] = None,
+        learnable_params: list[str] | None = None,
         discount_factor: float = 0.99,
     ):
         if params is None:
@@ -32,104 +47,125 @@ class LinearSystemMPC(MPC):
                 "V_0": np.array([1e-3]),
             }
 
-        ocp = export_parametric_ocp(params)
-
+        learnable_params = learnable_params if learnable_params is not None else []
+        ocp = export_parametric_ocp(param=params, learnable_params=learnable_params)
         configure_ocp_solver(ocp)
 
-        p_global = params.copy()
-        p_global.pop("Q")
-        p_global.pop("R")
-        # TODO Fix this properly, this is a hack, it should be clear what will be p global from the constructor and what not.
-        param_info = self.convert_param_dict_to_param_info(p_global, learnable_params)
-
-        super().__init__(ocp, param_info, discount_factor)
-
-    def convert_param_dict_to_param_info(
-        self, param_dict: dict[str, np.ndarray], learnable_param: list[str]
-    ) -> list[tuple[str, int, int, str]]:
-        """
-        Parameters:
-            param_dict: A dictionary mapping the labels of the parameters to numpy arrays containing the parameters.
-            learnable_param: A list of the labels of the parameters that should be learnable.
-        """
-        param_info = []
-        param_idx = 0
-        for key, param in param_dict.items():
-            learnable = (
-                "global_learnable" if key in learnable_param else "global_non_learnable"
-            )
-            param_info.append((key, param_idx, param_idx + param.size, learnable))
-            param_idx += param.size
-        return param_info
+        super().__init__(ocp=ocp, discount_factor=discount_factor)
 
 
 class LinearSystemOcpEnv(OCPEnv):
+    """The idea is that the linear system describes a point mass that is pushed by a force (noise)
+    and the agent is required to learn to control the point mass in such a way that this force does not push
+    the point mass over its boundaries (the constraints) while still minimizing the distance to the origin and
+    minimizing control effort.
+    """
+
     def __init__(
         self,
         mpc: LinearSystemMPC,
-        param_creator: ParamCreator,
         dt: float = 0.1,
         max_time: float = 10.0,
     ):
-        super().__init__(mpc, param_creator=param_creator, dt=dt, max_time=max_time)
+        super().__init__(
+            mpc,
+            dt=dt,
+            max_time=max_time,
+        )
 
-    def stage_cost(self, x: np.ndarray, u: np.ndarray, p: np.ndarray) -> float:
-        """The objective is just staying close to the origin, without leaving the state space.
-        Furthermore use as little control effort as possible.
-        """
-        # TODO: Make sure shapes are correct
-        cost = x.T @ x + u.T @ u
-        if x not in self.state_space:
-            cost += 1e1
-        return cost  # type:ignore
+    def step(self, action: np.ndarray) -> tuple[Any, float, bool, bool, dict]:
+        """Execute the dynamics of the linear system and push the resulting state with a random noise."""
+        o, r, term, trunc, info = super().step(
+            action
+        )  # o is the next state as np.ndarray, next parameters as MPCParameter
+        if self._np_random is None:
+            raise ValueError("First, reset needs to be called with a seed.")
+        noise = self._np_random.uniform(-0.1, 0)
+        state = o[0].copy()
+        state[0] += noise
+        self.x = state
+        o = (state, o[1])
+
+        if state not in self.state_space:
+            r -= 1e2
+            term = True
+
+        return o, r, term, trunc, info
+
+    def reset(
+        self, *, seed: int | None = None, options: dict | None = None
+    ) -> tuple[Any, dict]:  # type: ignore
+        return super().reset(seed=seed, options=options)
+
+    def init_state(self):
+        return [0.5, 0]  # Start in the middle of the bounds?
 
 
-def disc_dyn_expr(x, u, param):
+def find_param_in_p_or_p_global(param_name: list[str], model: AcadosModel) -> list:
+    if model.p == []:
+        return {key: model.p_global[key] for key in param_name}  # type:ignore
+    elif model.p_global is None:
+        return {key: model.p[key] for key in param_name}  # type:ignore
+    else:
+        return {
+            key: (model.p[key] if key in model.p.keys() else model.p_global[key])  # type:ignore
+            for key in param_name
+        }
+
+
+def disc_dyn_expr(model: AcadosModel):
     """
     Define the discrete dynamics function expression.
     """
+    x = model.x
+    u = model.u
+
+    param = find_param_in_p_or_p_global(["A", "B", "b"], model)
+
     return param["A"] @ x + param["B"] @ u + param["b"]
 
 
-def cost_expr_ext_cost(x, u, p):
+def cost_expr_ext_cost(model: AcadosModel):
     """
     Define the external cost function expression.
     """
-    y = cs.vertcat(x, u)
-    return 0.5 * (cs.mtimes([y.T, y])) + cs.mtimes([get_parameter("f", p).T, y])
+    x = model.x
+    u = model.u
+    param = find_param_in_p_or_p_global(["Q", "R", "f"], model)
+
+    return 0.5 * (
+        cs.transpose(x) @ param["Q"] @ x
+        + cs.transpose(u) @ param["R"] @ u
+        + cs.transpose(param["f"]) @ cs.vertcat(x, u)
+    )
 
 
-def cost_expr_ext_cost_0(x, u, p):
+def cost_expr_ext_cost_0(model: AcadosModel):
     """
     Define the external cost function expression at stage 0.
     """
-    return get_parameter("V_0", p) + cost_expr_ext_cost(x, u, p)
+    x = model.x
+    u = model.u
+    param = find_param_in_p_or_p_global(["V_0"], model)
+
+    return param["V_0"] + cost_expr_ext_cost(model)
 
 
-def cost_expr_ext_cost_e(x, param, N):
+def cost_expr_ext_cost_e(model: AcadosModel, param: dict[str, np.ndarray]):
     """
     Define the external cost function expression at the terminal stage as the solution of the discrete-time algebraic Riccati
     equation.
     """
 
+    x = model.x
+
     return 0.5 * cs.mtimes(
-        [x.T, solve_discrete_are(param["A"], param["B"], param["Q"], param["R"]), x]
+        [
+            cs.transpose(x),
+            solve_discrete_are(param["A"], param["B"], param["Q"], param["R"]),
+            x,
+        ]
     )
-
-
-def get_parameter(field, p) -> cs.DM:
-    if field == "A":
-        return cs.reshape(p[:4], 2, 2)
-    elif field == "B":
-        return cs.reshape(p[4:6], 2, 1)
-    elif field == "b":
-        return cs.reshape(p[6:8], 2, 1)
-    elif field == "V_0":
-        return p[8]
-    elif field == "f":
-        return cs.reshape(p[9:12], 3, 1)
-    else:
-        raise ValueError("Unknown parameter field.")
 
 
 def configure_ocp_solver(
@@ -142,15 +178,15 @@ def configure_ocp_solver(
     ocp.solver_options.qp_solver = "PARTIAL_CONDENSING_HPIPM"
     ocp.solver_options.qp_solver_ric_alg = 1
     ocp.solver_options.with_value_sens_wrt_params = True
-    ocp.solver_options.with_solution_sens_wrt_params = True
 
     # Set nominal parameters. Could be done at AcadosOcpSolver initialization?
 
 
 def export_parametric_ocp(
-    param: dict,
+    param: dict[str, np.ndarray],
     cost_type="EXTERNAL",
     name: str = "lti",
+    learnable_params: list[str] = [],
 ) -> AcadosOcp:
     """
     Export a parametric optimal control problem (OCP) for a discrete-time linear time-invariant (LTI) system.
@@ -173,69 +209,46 @@ def export_parametric_ocp(
 
     ocp.model.name = name
 
-    ocp.model.x = cs.SX.sym("x", 2)  # type:ignore
-    ocp.model.u = cs.SX.sym("u", 1)  # type:ignore
-
-    ocp.solver_options.N_horizon = 40
     ocp.dims.nx = 2
     ocp.dims.nu = 1
 
-    A = cs.SX.sym("A", 2, 2)  # type:ignore
-    B = cs.SX.sym("B", 2, 1)  # type:ignore
-    b = cs.SX.sym("b", 2, 1)  # type:ignore
-    V_0 = cs.SX.sym("V_0", 1, 1)  # type:ignore
-    f = cs.SX.sym("f", 3, 1)  # type:ignore
+    ocp.model.x = cs.SX.sym("x", ocp.dims.nx)  # type:ignore
+    ocp.model.u = cs.SX.sym("u", ocp.dims.nu)  # type:ignore
 
-    ocp.model.p_global = cs.vertcat(  # type:ignore
-        cs.reshape(A, -1, 1),
-        cs.reshape(B, -1, 1),
-        cs.reshape(b, -1, 1),
-        V_0,
-        cs.reshape(f, -1, 1),
-    )
+    ocp.solver_options.N_horizon = 40
 
-    ocp.p_global_values = np.concatenate(
-        [param[key].T.reshape(-1, 1) for key in ["A", "B", "b", "V_0", "f"]]
-    ).flatten()
-
-    ocp.model.disc_dyn_expr = A @ ocp.model.x + B @ ocp.model.u + b
-
-    if cost_type == "LINEAR_LS":
-        ocp.cost.cost_type = "LINEAR_LS"
-        ocp.cost.Vx_0 = np.zeros((ocp.dims.nx + ocp.dims.nu, ocp.dims.nx))
-        ocp.cost.Vx_0[: ocp.dims.nx, : ocp.dims.nx] = np.identity(ocp.dims.nx)
-        ocp.cost.Vu_0 = np.zeros((ocp.dims.nx + ocp.dims.nu, ocp.dims.nu))
-        ocp.cost.Vu_0[-1, -1] = 1
-
-        ocp.cost.Vx = np.zeros((ocp.dims.nx + ocp.dims.nu, ocp.dims.nx))
-        ocp.cost.Vx[: ocp.dims.nx, : ocp.dims.nx] = np.identity(ocp.dims.nx)
-        ocp.cost.Vu = np.zeros((ocp.dims.nx + ocp.dims.nu, ocp.dims.nu))
-        ocp.cost.Vu[-1, -1] = 1
-        ocp.cost.Vx_e = np.identity(ocp.dims.nx)
-
-        ocp.cost.W_0 = linalg.block_diag(param["Q"], param["R"])
-        ocp.cost.W = linalg.block_diag(param["Q"], param["R"])
-        ocp.cost.W_e = param["Q"]
-
-        ocp.cost.yref_0 = np.zeros(ocp.dims.nx + ocp.dims.nu)
-        ocp.cost.yref = np.zeros(ocp.dims.nx + ocp.dims.nu)
-        ocp.cost.yref_e = np.zeros(ocp.dims.nx)
-
-    elif cost_type == "EXTERNAL":
-        ocp.cost.cost_type_0 = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost_0 = cost_expr_ext_cost_0(
-            ocp.model.x, ocp.model.u, ocp.model.p_global
+    # Add learnable parameters to p_global
+    if len(learnable_params) != 0:
+        ocp.model.p_global = struct_symSX(
+            [entry(key, shape=param[key].shape) for key in learnable_params]
         )
+        ocp.p_global_values = np.concatenate(
+            [param[key].T.reshape(-1, 1) for key in learnable_params]
+        ).flatten()
 
-        ocp.cost.cost_type = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(
-            ocp.model.x, ocp.model.u, ocp.model.p_global
+    # Add non_learnable parameters to p (stage-wise parameters)
+    non_learnable_params = [key for key in param.keys() if key not in learnable_params]
+    if len(non_learnable_params) != 0:
+        ocp.model.p = struct_symSX(
+            [entry(key, shape=param[key].shape) for key in non_learnable_params]
         )
+        ocp.parameter_values = np.concatenate(
+            [param[key].T.reshape(-1, 1) for key in non_learnable_params]
+        ).flatten()
 
-        ocp.cost.cost_type_e = "EXTERNAL"
-        ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(
-            ocp.model.x, param, ocp.solver_options.N_horizon
-        )
+    print("learnable_params", learnable_params)
+    print("non_learnable_params", non_learnable_params)
+
+    ocp.model.disc_dyn_expr = disc_dyn_expr(ocp.model)
+
+    ocp.cost.cost_type_0 = "EXTERNAL"
+    ocp.model.cost_expr_ext_cost_0 = cost_expr_ext_cost_0(ocp.model)
+
+    ocp.cost.cost_type = "EXTERNAL"
+    ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(ocp.model)
+
+    ocp.cost.cost_type_e = "EXTERNAL"
+    ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(ocp.model, param)
 
     ocp.constraints.idxbx_0 = np.array([0, 1])
     ocp.constraints.lbx_0 = np.array([-1.0, -1.0])
@@ -254,5 +267,13 @@ def export_parametric_ocp(
     ocp.constraints.idxbu = np.array([0])
     ocp.constraints.lbu = np.array([-1.0])
     ocp.constraints.ubu = np.array([+1.0])
+
+    # TODO: Make a PR to acados to allow struct_symSX | struct_symMX in acados_template and then concatenate there
+    if isinstance(ocp.model.p, struct_symSX):
+        ocp.model.p = ocp.model.p.cat if ocp.model.p is not None else []
+    if isinstance(ocp.model.p_global, struct_symSX):
+        ocp.model.p_global = (
+            ocp.model.p_global.cat if ocp.model.p_global is not None else None
+        )
 
     return ocp

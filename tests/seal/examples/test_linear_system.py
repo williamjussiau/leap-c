@@ -8,9 +8,9 @@ from seal.examples.linear_system import (
     export_parametric_ocp,
 )
 from seal.test import (
-    run_test_pi_update_for_varying_parameters,
-    run_test_q_update_for_varying_parameters,
-    run_test_v_update_for_varying_parameters,
+    run_test_policy_for_varying_parameters,
+    run_test_state_action_value_for_varying_parameters,
+    run_test_state_value_for_varying_parameters,
     set_up_test_parameters,
 )
 
@@ -42,22 +42,6 @@ def get_test_param():
     }
 
 
-def test_set_p_global_get_p_global():
-    """
-    Test if the set_p and get_p methods work correctly.
-    """
-
-    mpc = set_up_mpc()
-
-    p = mpc.p_global_values
-
-    p += np.random.randn(p.shape[0])
-
-    mpc.p_global_values = p
-
-    assert np.allclose(mpc.p_global_values, p)
-
-
 def test_export_parametric_ocp_external(param: dict[np.ndarray] = None):
     """
     Test the export of a parametric optimal control problem (OCP) with an external cost type.
@@ -84,67 +68,79 @@ def set_up_mpc(
     generate_code: bool = False,
     build_code: bool = False,
     json_file_prefix: str = "acados_ocp_linear_system",
-    learnable_params: list[str] = []
+    learnable_params: list[str] = [],
 ) -> LinearSystemMPC:
-    return LinearSystemMPC(
-        params=get_test_param(),
-        learnable_params=learnable_params
-    )
+    return LinearSystemMPC(params=get_test_param(), learnable_params=learnable_params)
 
 
-def test_v_update(
+def test_state_value(
     generate_code: bool = True,
     build_code: bool = True,
     json_file_prefix: str = "acados_ocp_linear_system",
     x0: np.ndarray = np.array([0.1, 0.1]),
     varying_param_label: str = "A_0",
+    learnable_params: list[str] = ["A", "B", "Q", "R", "b", "f", "V_0"],
     np_test: int = 10,
     plot: bool = False,
 ):
-    mpc = set_up_mpc(generate_code, build_code, json_file_prefix)
+    mpc = set_up_mpc(generate_code, build_code, json_file_prefix, learnable_params)
 
-    test_param = set_up_test_parameters(mpc, np_test, varying_param_label=varying_param_label)
+    test_param = set_up_test_parameters(
+        mpc, np_test, varying_param_label=varying_param_label
+    )
 
-    absolute_difference = run_test_v_update_for_varying_parameters(mpc, x0, test_param, plot)
+    absolute_difference = run_test_state_value_for_varying_parameters(
+        mpc, x0, test_param, plot
+    )
 
     assert np.median(absolute_difference) <= 1e-1
 
 
-def test_q_update(
+def test_state_action_value(
     generate_code: bool = False,
     build_code: bool = False,
     json_file_prefix: str = "acados_ocp_linear_system",
     x0: np.ndarray = np.array([0.1, 0.1]),
     u0: np.ndarray = np.array([0.0]),
     varying_param_label: str = "A_0",
+    learnable_params: list[str] = ["A", "B", "Q", "R", "b", "f", "V_0"],
     np_test: int = 10,
     plot: bool = False,
 ):
-    mpc = set_up_mpc(generate_code, build_code, json_file_prefix)
+    mpc = set_up_mpc(generate_code, build_code, json_file_prefix, learnable_params)
 
     u0 = mpc.ocp_solver.solve_for_x0(x0)
 
-    test_param = set_up_test_parameters(mpc, np_test, varying_param_label=varying_param_label)
+    test_param = set_up_test_parameters(
+        mpc, np_test, varying_param_label=varying_param_label
+    )
 
-    absolute_difference = run_test_q_update_for_varying_parameters(mpc, x0, u0, test_param, plot)
+    absolute_difference = run_test_state_action_value_for_varying_parameters(
+        mpc, x0, u0, test_param, plot
+    )
 
     assert np.median(absolute_difference) <= 1e-1
 
 
-def test_pi_update(
+def test_policy(
     generate_code: bool = False,
     build_code: bool = False,
     json_file_prefix: str = "acados_ocp_linear_system",
     x0: np.ndarray = np.array([0.1, 0.1]),
     varying_param_label: str = "A_0",
+    learnable_params: list[str] = ["A", "B", "Q", "R", "b", "f", "V_0"],
     np_test: int = 10,
     plot: bool = False,
 ):
-    mpc = set_up_mpc(generate_code, build_code, json_file_prefix)
+    mpc = set_up_mpc(generate_code, build_code, json_file_prefix, learnable_params)
 
-    test_param = set_up_test_parameters(mpc, np_test, varying_param_label=varying_param_label)
+    test_param = set_up_test_parameters(
+        mpc, np_test, varying_param_label=varying_param_label
+    )
 
-    absolute_difference = run_test_pi_update_for_varying_parameters(mpc, x0, test_param, plot)
+    absolute_difference = run_test_policy_for_varying_parameters(
+        mpc, x0, test_param, plot
+    )
 
     assert np.median(absolute_difference) <= 1e-1
 
@@ -154,10 +150,13 @@ def test_closed_loop(
     build_code: bool = False,
     json_file_prefix: str = "acados_ocp_linear_system",
     x0: np.ndarray = np.array([0.5, 0.5]),
+    learnable_params: list[str] = ["A", "B", "Q", "R", "b", "f", "V_0"],
     n_sim: int = 100,
     plot: bool = False,
 ):
-    mpc = set_up_mpc(generate_code, build_code, json_file_prefix)
+    mpc = set_up_mpc(
+        generate_code, build_code, json_file_prefix, learnable_params=learnable_params
+    )
 
     x = [x0]
     u = []
@@ -181,7 +180,11 @@ def test_closed_loop(
         plt.legend()
         plt.show()
 
-    assert np.median(x[-10:, 0]) <= 1e-1 and np.median(x[-10:, 1]) <= 1e-1 and np.median(u[-10:]) <= 1e-1
+    assert (
+        np.median(x[-10:, 0]) <= 1e-1
+        and np.median(x[-10:, 1]) <= 1e-1
+        and np.median(u[-10:]) <= 1e-1
+    )
 
 
 def test_open_loop(
@@ -191,13 +194,25 @@ def test_open_loop(
     x0: np.ndarray = np.array([0.5, 0.5]),
     plot: bool = False,
 ):
-    mpc = set_up_mpc(generate_code, build_code, json_file_prefix)
+    mpc = set_up_mpc(
+        generate_code, build_code, json_file_prefix, learnable_params=["A", "b", "V_0"]
+    )
 
     mpc.ocp_solver.solve_for_x0(x0)
 
     k = np.arange(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)
-    u = np.array([mpc.ocp_solver.get(stage, "u") for stage in range(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)])
-    x = np.array([mpc.ocp_solver.get(stage, "x") for stage in range(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)])
+    u = np.array(
+        [
+            mpc.ocp_solver.get(stage, "u")
+            for stage in range(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)
+        ]
+    )
+    x = np.array(
+        [
+            mpc.ocp_solver.get(stage, "x")
+            for stage in range(mpc.ocp_solver.acados_ocp.solver_options.N_horizon)
+        ]
+    )
 
     if plot:
         plt.figure()
@@ -210,7 +225,11 @@ def test_open_loop(
         plt.legend()
         plt.show()
 
-    assert np.median(x[-10:, 0]) <= 1e-1 and np.median(x[-10:, 1]) <= 1e-1 and np.median(u[-10:]) <= 1e-1
+    assert (
+        np.median(x[-10:, 0]) <= 1e-1
+        and np.median(x[-10:, 1]) <= 1e-1
+        and np.median(u[-10:]) <= 1e-1
+    )
 
 
 if __name__ == "__main__":

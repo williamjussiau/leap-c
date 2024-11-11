@@ -12,7 +12,7 @@ from acados_template import (
     AcadosSimSolver,
 )
 
-from seal.mpc import MPC
+from seal.mpc import MPC, MPCParameter
 from seal.util import AcadosFileManager
 
 
@@ -24,13 +24,7 @@ def create_dynamics_from_mpc(
 
     # if there is a discrete dynamics function, use it
     if ocp.model.disc_dyn_expr is not None:
-        inputs = [ocp.model.x, ocp.model.u]
-        if ocp.model.p_global is not None:
-            inputs.append(ocp.model.p_global)
-
-        expr = ocp.model.disc_dyn_expr
-
-        return CasadiDynamics(expr, inputs)
+        return CasadiDynamics(mpc)
 
     # otherwise we create a AcadosSim object
     assert ocp.model.f_expl_expr is not None
@@ -133,13 +127,24 @@ class SimDynamics(Dynamics):
 
 
 class CasadiDynamics(Dynamics):
-    def __init__(self, expr: ca.SX, inputs: list[ca.SX]):
-        self.expr = expr
-        self.inputs = inputs
+    def __init__(self, mpc: MPC):
+        self.mpc = mpc
 
-        self.dyn_fn = ca.Function(
-            "dyn", inputs, [expr], ["x", "u", "p"], ["x_next"]
-        )
+        ocp = mpc.ocp
+        inputs = [ocp.model.x, ocp.model.u]
+        names = ["x", "u"]
+
+        if ocp.model.p_global is not None:
+            inputs.append(ocp.model.p_global)
+            names.append("p_global")
+
+        if ocp.model.p is not None:
+            inputs.append(ocp.model.p)
+            names.append("p")
+
+        expr = ocp.model.disc_dyn_expr
+
+        self.dyn_fn = ca.Function("dyn", inputs, [expr], names, ["x_next"])
 
         # generate the jacobian
         inputs_cat = ca.vertcat(*inputs)
@@ -151,10 +156,12 @@ class CasadiDynamics(Dynamics):
         self,
         x: np.ndarray,
         u: np.ndarray,
-        p: np.ndarray | None = None,
+        p: MPCParameter | None = None,
         with_sens: bool = False,
     ) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Step the dynamics.
+
+        If the parameter is not provided, the current parameter of the MPC object is used.
 
         Args:
             x: The current state.
@@ -166,11 +173,21 @@ class CasadiDynamics(Dynamics):
             The next state.
         """
         x_shape = x.shape
+        batched = True if len(x_shape) > 1 else False
 
         inputs = [x, u]
 
-        if p is not None:
-            inputs.append(p)
+        p_global, p_stage = self.mpc.fetch_param(p, 0)
+
+        if p_global is not None:
+            if batched:
+                p_global = np.tile(p_global, (x_shape[0], 1))
+            inputs.append(p_global)
+
+        if p_stage is not None:
+            if batched:
+                p_stage = np.tile(p_stage, (x_shape[0], 1))
+            inputs.append(p_stage)
 
         # transpose inputs to match casadi batch format
         inputs = [i.T for i in inputs]
@@ -194,4 +211,3 @@ class CasadiDynamics(Dynamics):
             Sx, Su, _ = np.split(jac, splits, axis=0)
 
         return output, Sx, Su
-

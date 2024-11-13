@@ -132,14 +132,23 @@ def test_policy(
     np_test: int = 10,
     plot: bool = False,
 ):
-    mpc = set_up_mpc(generate_code, build_code, json_file_prefix, learnable_params)
+    mpc = set_up_mpc(
+        generate_code=generate_code,
+        build_code=build_code,
+        json_file_prefix=json_file_prefix,
+        learnable_params=learnable_params,
+    )
 
     test_param = set_up_test_parameters(
         mpc, np_test, varying_param_label=varying_param_label
     )
 
     absolute_difference = run_test_policy_for_varying_parameters(
-        mpc, x0, test_param, plot
+        mpc=mpc,
+        x0=x0,
+        test_param=test_param,
+        use_adj_sens=False,
+        plot=plot,
     )
 
     assert np.median(absolute_difference) <= 1e-1
@@ -155,7 +164,10 @@ def test_closed_loop(
     plot: bool = False,
 ):
     mpc = set_up_mpc(
-        generate_code, build_code, json_file_prefix, learnable_params=learnable_params
+        generate_code=generate_code,
+        build_code=build_code,
+        json_file_prefix=json_file_prefix,
+        learnable_params=learnable_params,
     )
 
     x = [x0]

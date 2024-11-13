@@ -276,12 +276,16 @@ class MPC(ABC):
         state: np.ndarray,
         p_global: np.ndarray | None,
         sens: bool = False,
+        use_adj_sens: bool = True,
     ) -> np.ndarray:
         """
         Compute the policy for the given state.
 
         Args:
             state: The state for which to compute the policy.
+            p_global: The global parameters.
+            sens: Whether to compute the sensitivity of the policy with respect to the parameters.
+            use_adj_sens: Whether to use adjoint sensitivity.
 
         Returns:
             The policy.
@@ -289,7 +293,9 @@ class MPC(ABC):
 
         mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
 
-        mpc_output, _ = self.__call__(mpc_input=mpc_input, dudp=sens)
+        mpc_output, _ = self.__call__(
+            mpc_input=mpc_input, dudp=sens, use_adj_sens=use_adj_sens
+        )
 
         return mpc_output.u_star[0], mpc_output.du0_dp_global
 
@@ -300,6 +306,7 @@ class MPC(ABC):
         dudx: bool = False,
         dudp: bool = False,
         dvdp: bool = False,
+        use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, MPCState | list[MPCState]]:
         """
         Solve the OCP for the given initial state and parameters.
@@ -310,6 +317,7 @@ class MPC(ABC):
             dudx: Whether to compute the sensitivity of the action with respect to the state.
             dudp: Whether to compute the sensitivity of the action with respect to the parameters.
             dvdp: Whether to compute the sensitivity of the value function with respect to the parameters.
+            use_adj_sens: Whether to use adjoint sensitivity.
 
         Returns:
             mpc_output: The output of the MPC controller.
@@ -323,6 +331,7 @@ class MPC(ABC):
                 dudx=dudx,
                 dudp=dudp,
                 dvdp=dvdp,
+                use_adj_sens=use_adj_sens,
             )
 
         return self._batch_solve(
@@ -340,7 +349,22 @@ class MPC(ABC):
         dudx: bool = False,
         dudp: bool = False,
         dvdp: bool = False,
+        use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, MPCState]:
+        """Solve the OCP for the given input and state.
+
+        Args:
+            mpc_input: The input of the MPC controller.
+            mpc_state: The iterate of the solver to use as initialization.
+            dudx: Whether to compute the sensitivity of the action with respect to the state.
+            dudp: Whether to compute the sensitivity of the action with respect to the parameters.
+            dvdp: Whether to compute the sensitivity of the value function with respect to the parameters.
+            use_adj_sens: Whether to use adjoint sensitivity.
+
+        Returns:
+            mpc_output: The output of the MPC controller.
+            mpc_state: The MPCState (iterate of the solver).
+        """
         # initialize solvers
         if mpc_input is not None:
             initialize_ocp_solver(self.ocp_solver, mpc_input.parameters, mpc_state)
@@ -376,12 +400,32 @@ class MPC(ABC):
             )
 
             self.ocp_sensitivity_solver.solve_for_x0(
-                mpc_input.x0, fail_on_nonzero_status=False, print_stats_on_failure=False
+                mpc_input.x0,
+                fail_on_nonzero_status=False,
+                print_stats_on_failure=False,
             )
-            kw["du0_dp_global"] = self.ocp_sensitivity_solver.eval_solution_sensitivity(
-                0, "p_global"
-            )[1]
 
+            if not use_adj_sens:
+                print("Evaluating forward sensitivity")
+                kw["du0_dp_global"] = (
+                    self.ocp_sensitivity_solver.eval_solution_sensitivity(
+                        0, "p_global"
+                    )[1]
+                )
+            else:
+                kw["du0_dp_global"] = (
+                    self.ocp_sensitivity_solver.eval_adjoint_solution_sensitivity(
+                        seed_x=[],
+                        seed_u=[
+                            (
+                                0,
+                                np.eye((self.ocp.dims.nu)),
+                            )
+                        ],
+                        with_respect_to="p_global",
+                        sanity_checks=True,
+                    )
+                )
         if dvdp:
             kw["dvalue_dp_global"] = (
                 self.ocp_solver.eval_and_get_optimal_value_gradient("p_global")

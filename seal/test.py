@@ -148,8 +148,12 @@ def run_test_state_action_value_for_varying_parameters(
 
 
 def run_test_policy_for_varying_parameters(
-    mpc: MPC, x0, test_param, plot: bool = False
-):
+    mpc: MPC,
+    x0,
+    test_param,
+    use_adj_sens: bool = False,
+    plot: bool = False,
+) -> np.ndarray:
     # Evaluate v and dvdp using acados
     np_test = test_param.shape[1]
 
@@ -165,7 +169,9 @@ def run_test_policy_for_varying_parameters(
         #     p_stagewise=None,
         #     p_stagewise_sparse_idx=None,
         # )
-        pi_i, sens = mpc.policy(state=x0, p_global=test_param[:, i], sens=True)
+        pi_i, sens = mpc.policy(
+            state=x0, p_global=test_param[:, i], sens=True, use_adj_sens=use_adj_sens
+        )
         dpidp_i = sens[0]
         policy.append(pi_i)
         policy_gradient.append(dpidp_i)

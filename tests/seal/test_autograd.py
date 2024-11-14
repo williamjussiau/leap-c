@@ -2,7 +2,6 @@ from functools import partial
 
 import numpy as np
 import torch
-from examples.test_linear_system import set_up_mpc, set_up_test_parameters
 
 from seal.mpc import MPCParameter
 from seal.nn.modules import CleanseAndReducePerSampleLoss, MPCSolutionModule
@@ -23,23 +22,23 @@ from seal.nn.modules import CleanseAndReducePerSampleLoss, MPCSolutionModule
 #         json_file_prefix,
 #         learnable_params=["A", "B", "b", "f", "V_0"],
 #     )
-# 
+#
 #     test_param = set_up_test_parameters(
 #         mpc, batch_size, varying_param_label=varying_param_label
 #     ).T  # (batch_size, 12)
-# 
+#
 #     p_rests = [MPCParameter(None, None, None, None) for i in range(batch_size)]
-# 
+#
 #     mpc_module = MPCSolutionModule(mpc)
 #     x0 = torch.tensor([[0.1, 0.1]], dtype=torch.float64)
 #     x0 = torch.tile(x0, (batch_size, 1))
 #     p = torch.tensor(test_param, dtype=torch.float64)
-# 
+#
 #     x0.requires_grad = True
 #     p.requires_grad = True
-# 
+#
 #     fix_p_rests = partial(mpc_module.forward, p_rests=p_rests)
-# 
+#
 #     torch.autograd.gradcheck(
 #         fix_p_rests, (x0, p), atol=1e-2, eps=1e-4, raise_exception=True
 #     )

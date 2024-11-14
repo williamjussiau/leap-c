@@ -406,7 +406,6 @@ class MPC(ABC):
             )
 
             if not use_adj_sens:
-                print("Evaluating forward sensitivity")
                 kw["du0_dp_global"] = (
                     self.ocp_sensitivity_solver.eval_solution_sensitivity(
                         0, "p_global"

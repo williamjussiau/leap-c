@@ -9,6 +9,10 @@ import torch
 from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSim, AcadosSimSolver
 
 
+def SX_to_labels(SX: ca.SX) -> list[str]:
+    return SX.str().strip("[]").split(", ")
+
+
 def find_idx_for_labels(sub_vars: ca.SX, sub_label: str) -> list[int]:
     """Return a list of indices where sub_label is part of the variable label."""
     return [

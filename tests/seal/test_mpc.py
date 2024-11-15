@@ -1,9 +1,9 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import numpy.testing as npt
-from seal.mpc import MPC
 import pytest
 
-import matplotlib.pyplot as plt
+from seal.mpc import MPC
 
 
 def find_param_index_and_increment(test_param):

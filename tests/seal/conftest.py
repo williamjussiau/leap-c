@@ -1,11 +1,8 @@
+import numpy as np
 import pytest
 
 from seal.examples.linear_system import LinearSystemMPC
-
 from seal.mpc import MPC
-
-import numpy as np
-
 from seal.util import SX_to_labels, find_idx_for_labels
 
 

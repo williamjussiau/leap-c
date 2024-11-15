@@ -127,7 +127,7 @@ class MPCSolutionFunction(autograd.Function):
         x0: torch.Tensor,
         u0: torch.Tensor | None,
         p_global: torch.Tensor | None,
-        p_rests: MPCParameter | None,
+        p_stagewise: MPCParameter | None,
         initializations: list[MPCState] | None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         device = x0.device
@@ -140,23 +140,23 @@ class MPCSolutionFunction(autograd.Function):
         need_dudx0 = need_dx0 and u0 is None
 
         if p_global is None:
-            if p_rests is None:
+            if p_stagewise is None:
                 p_whole = None
             else:
-                p_whole = p_rests
+                p_whole = p_stagewise
         else:
             p_global_np = tensor_to_numpy(p_global)
-            if p_rests is None:
+            if p_stagewise is None:
                 p_whole = MPCParameter(p_global_np, None, None)
             else:
-                if p_rests.p_global is not None:
+                if p_stagewise.p_global is not None:
                     raise ValueError(
                         "p_global is already set in p_rests, but would be overwritten!"
                     )
                 p_whole = MPCParameter(
                     p_global=p_global_np,
-                    p_stagewise=p_rests.p_stagewise,
-                    p_stagewise_sparse_idx=p_rests.p_stagewise_sparse_idx,
+                    p_stagewise=p_stagewise.p_stagewise,
+                    p_stagewise_sparse_idx=p_stagewise.p_stagewise_sparse_idx,
                 )
         x0_np = tensor_to_numpy(x0)
         u0_np = None if u0 is None else tensor_to_numpy(u0)
@@ -166,13 +166,17 @@ class MPCSolutionFunction(autograd.Function):
             mpc_state=initializations,
             dudx=need_dudx0,
             dudp=need_dudp_global,
+            dvdx=need_dx0,
+            dvdu=need_du0,
             dvdp=need_dp_global,
+            use_adj_sens=True,
         )
         u_star = mpc_output.u_star if u0 is None else None  # type:ignore
-        dudp_global = mpc_output.du0_dp_global if need_dudp_global is None else None  # type:ignore
+        dudp_global = mpc_output.du0_dp_global if need_dudp_global else None  # type:ignore
         dudx0 = mpc_output.du0_dx0 if need_dudx0 else None  # type:ignore
         dvaluedp_global = mpc_output.dvalue_dp_global if need_dp_global else None  # type:ignore
         dvaluedu0 = mpc_output.dvalue_du0 if need_du0 else None  # type:ignore
+        dvaluedx0 = mpc_output.dvalue_dx0 if need_dx0 else None  # type:ignore
         value = mpc_output.Q if u0 is not None else mpc_output.V
         status = mpc_output.status
 
@@ -180,6 +184,7 @@ class MPCSolutionFunction(autograd.Function):
         ctx.dudx0 = dudx0
         ctx.dvaluedp_global = dvaluedp_global
         ctx.dvaluedu0 = dvaluedu0
+        ctx.dvaluedx0 = dvaluedx0
         ctx.u0_was_none = u0 is None
 
         value = mpc_output.Q if u0 is not None else mpc_output.V
@@ -187,6 +192,7 @@ class MPCSolutionFunction(autograd.Function):
             u_star = torch.tensor(u_star, device=device, dtype=dtype)
         else:
             u_star = torch.empty(1)
+            u_star[0] = float("nan")
             ctx.mark_non_differentiable(u_star)
         value = torch.tensor(value, device=device, dtype=dtype)
         status = torch.tensor(status, device=device, dtype=torch.int8)
@@ -198,19 +204,26 @@ class MPCSolutionFunction(autograd.Function):
     @staticmethod
     @autograd.function.once_differentiable
     def backward(ctx, *grad_outputs):
-        dLdu, dLdvalue, _ = grad_outputs
+        dLossdu, dLossdvalue, _ = grad_outputs
 
-        device = dLdvalue.device
-        dtype = dLdvalue.dtype
+        device = dLossdvalue.device
+        dtype = dLossdvalue.dtype
 
         need_dx0 = ctx.needs_input_grad[1]
         need_du0 = ctx.needs_input_grad[2]
         need_dp_global = ctx.needs_input_grad[3]
         u0_was_none = ctx.u0_was_none
-        need_dudx0 = need_dx0 and not u0_was_none
-        need_dudp_global = need_dp_global and not u0_was_none
+        need_dudx0 = need_dx0 and u0_was_none
+        need_dudp_global = need_dp_global and u0_was_none
 
         if need_dx0:
+            dvaluedx0 = ctx.dvaluedx0
+            if dvaluedx0 is None:
+                raise ValueError(
+                    "Something went wrong: The necessary sensitivities dvaluedx0 from the forward pass do not exist."
+                )
+            dvaluedx0 = torch.tensor(dvaluedx0, device=device, dtype=dtype)
+            grad_x = torch.einsum("bj,b->bj", dvaluedx0, dLossdvalue)
             if need_dudx0:
                 dudx0 = ctx.dudx0
                 if dudx0 is None:
@@ -218,11 +231,7 @@ class MPCSolutionFunction(autograd.Function):
                         "Something went wrong: The necessary sensitivities dudx0 from the forward pass do not exist."
                     )
                 dudx0 = torch.tensor(dudx0, device=device, dtype=dtype)
-                grad_x = torch.einsum("bkj,bk->bj", dudx0, dLdu)
-            else:
-                raise ValueError(
-                    "Differentiating the value with respect to x0 is currently not supported (but it would be possible to extend this functionality here if needed)."
-                )
+                grad_x = grad_x + torch.einsum("bkj,bk->bj", dudx0, dLossdu)
         else:
             grad_x = None
 
@@ -233,25 +242,32 @@ class MPCSolutionFunction(autograd.Function):
                     "Something went wrong: The necessary sensitivities dvaluedp_global from the forward pass do not exist."
                 )
             dvaluedp_global = torch.tensor(dvaluedp_global, device=device, dtype=dtype)
-            grad_p = torch.einsum("bj,b->bj", dvaluedp_global, dLdvalue)
+            grad_p = torch.einsum("bj,b->bj", dvaluedp_global, dLossdvalue)
             if need_dudp_global:
-                dudp_global = ctx.dudp_global_learnable
+                dudp_global = ctx.dudp_global
                 if dudp_global is None:
                     raise ValueError(
                         "ctx.needs_input_grad wrt. p was not True in forward pass, it is not working as we expected."
                     )
                 dudp_global = torch.tensor(dudp_global, device=device, dtype=dtype)
-                grad_p = grad_p + torch.einsum("bkj,bk->bj", dudp_global, dLdu)
+                grad_p = grad_p + torch.einsum("bkj,bk->bj", dudp_global, dLossdu)
         else:
             grad_p = None
 
         if need_du0:
-            dvaluedu0 = ctx.dvaluedu0
-            if dvaluedu0 is None:
+            # TODO: Turn on when sensitivities exist.
+            # dvaluedu0 = ctx.dvaluedu0
+            # if dvaluedu0 is None:
+            #     raise ValueError(
+            #         "Something went wrong: The necessary sensitivities dvaluedu0 from the forward pass do not exist."
+            #     )
+            # dvaluedu0 = torch.tensor(dvaluedu0, device=device, dtype=dtype)
+            # grad_u = torch.einsum("bj,b->bj", dvaluedu0, dLdvalue)
+            if torch.any(dLossdvalue):
                 raise ValueError(
-                    "Something went wrong: The necessary sensitivities dvaluedu0 from the forward pass do not exist."
+                    "Sensitivities of value for u0 are not implemented yet."
                 )
-            dvaluedu0 = torch.tensor(dvaluedu0, device=device, dtype=dtype)
-            grad_u = torch.einsum("bj,b->bj", dvaluedu0, dLdvalue)
+        else:
+            grad_u = None
 
         return (None, grad_x, grad_u, grad_p, None, None)

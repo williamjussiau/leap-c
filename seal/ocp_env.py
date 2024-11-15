@@ -120,7 +120,7 @@ class OCPEnv(gym.Env):
         """Returns the parameters of the system. Per default the parameter values are taken from the mpc.
 
         Returns:
-            The initial parameters of the system.
+            The current parameters of the system.
         """
         return MPCParameter(
             p_global=self.mpc.default_p_global, p_stagewise=self.mpc.default_p_stagewise

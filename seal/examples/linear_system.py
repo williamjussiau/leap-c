@@ -144,8 +144,6 @@ def cost_expr_ext_cost_0(model: AcadosModel):
     """
     Define the external cost function expression at stage 0.
     """
-    x = model.x
-    u = model.u
     param = find_param_in_p_or_p_global(["V_0"], model)
 
     return param["V_0"] + cost_expr_ext_cost(model)
@@ -257,6 +255,7 @@ def export_parametric_ocp(
     ocp.constraints.idxbx = np.array([0, 1])
     ocp.constraints.lbx = np.array([-0.0, -1.0])
     ocp.constraints.ubx = np.array([+1.0, +1.0])
+    ocp.constraints.x0 = np.array([0.5, 0.0])  # Default constraints.x0?
 
     ocp.constraints.idxsbx = np.array([0])
     ocp.cost.zl = np.array([1e2])

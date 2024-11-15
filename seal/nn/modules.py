@@ -79,7 +79,7 @@ class MPCSolutionModule(nn.Module):
         x0: torch.Tensor,
         u0: torch.Tensor | None = None,
         p_global: torch.Tensor | None = None,
-        p_rests: list[MPCParameter] | None = None,
+        p_stagewise: MPCParameter | None = None,
         initializations: list[MPCState] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Differentiation is only allowed with respect to x0, u0 and p_global.
@@ -87,33 +87,34 @@ class MPCSolutionModule(nn.Module):
 
         Parameters:
             x0: The initial state of the MPC, shape (batch_size, xdim).
-            u0: The initial action of the MPC, shape (batch_size, udim). If it is not given, the initial action will be variable in the MPC.
+            u0: The initial action of the MPC, shape (batch_size, udim).
+                If it is not given, the initial action will be variable in the MPC.
             p_global: The parameters of the MPC, shape (batch_size, p_global_dim).
-            p_rests: A list of length batch_size with the remaining parameter information for the MPC.
+            p_stagewise: The remaining parameter information for the MPC, i.e., the stagewise parameters (batched according to the other input).
                 NOTE that it should not contain p_global, since this will be overwritten by p_global!
             initializations: A list of length batch_size which contains the MPCState used for
                 initialization in the respective solve.
         Returns:
             u_star: The first optimal action of the MPC solution, given the initial state and parameters.
-                NOTE that this is an empty tensor if u0 was given in the forward pass.
+                NOTE that this is a tensor of shape (1, ) containing NaN if u0 was given in the forward pass.
             value: The value of the MPC solution (the cost of the objective function in the solution).
                 Corresponds to the Value function if u0 is not given, and the Q function if u0 is given.
+                NOTE: Not differentiable yet.
             status: The status of the MPC solution, where 0 means converged and all other integers count as not converged,
                 (useful for e.g., logging, debugging or cleaning the backward pass from non-converged solutions).
 
-        NOTE: Differentiation of the value with respect to x0 is currently not allowed, but can be implemented if needed.
         NOTE: An extension to allow for outputting and differentiating also with respect to other stages
             (meaning stages of the action and state trajectories) than the first one is possible, but not implemented yet.
         NOTE: Using a multiphase MPC formulation allows differentiation with respect to parameters that are not "truly" global,
             but this is not implemented yet?
         """
         return MPCSolutionFunction.apply(  # type:ignore
-            mpc=self.mpc,
-            x0=x0,
-            u0=u0,
-            p_global=p_global,
-            p_rests=p_rests,
-            initializations=initializations,
+            self.mpc,
+            x0,
+            u0,
+            p_global,
+            p_stagewise,
+            initializations,
         )
 
 

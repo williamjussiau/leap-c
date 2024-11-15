@@ -78,7 +78,7 @@ class MPCOutput(NamedTuple):
     x_star: np.ndarray | None = None  # (B, N+1, x_dim)  or (N+1, x_dim)
     Q: np.ndarray | None = None  # (B, ) or (1, )
     V: np.ndarray | None = None  # (B, ) or (1, )
-    # dvaluedx0: np.ndarray  # (B, x_dim) or (x_dim, )  could be added in the future, because it is for free
+    dvalue_dx0: np.ndarray | None = None  # (B, x_dim) or (x_dim, )
     dvalue_du0: np.ndarray | None = None  # (B, u_dim) or (u_dim, )
     dvalue_dp_global: np.ndarray | None = None  # (B, p_dim) or (p_dim, )
     du0_dp_global: np.ndarray | None = None  # (B, udim, p_dim) or (udim, p_dim)
@@ -215,6 +215,12 @@ class MPC(ABC):
         return solver
 
     @property
+    def p_global_dim(self) -> int:
+        """Return the dimension of p_global."""
+        # TODO: Implement this
+        raise NotImplementedError()
+
+    @property
     def N(self) -> int:
         return self.ocp.solver_options.N_horizon  # type: ignore
 
@@ -230,7 +236,7 @@ class MPC(ABC):
 
     def state_value(
         self, state: np.ndarray, p_global: np.ndarray | None, sens: bool = False
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         """
         Compute the value function for the given state.
 
@@ -238,13 +244,13 @@ class MPC(ABC):
             state: The state for which to compute the value function.
 
         Returns:
-            The value function.
+            The value function and dvalue_dp_global if requested.
         """
 
         mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
         mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
-        return mpc_output.V, mpc_output.dvalue_dp_global
+        return mpc_output.V, mpc_output.dvalue_dp_global  # type:ignore
 
     def state_action_value(
         self,
@@ -252,7 +258,7 @@ class MPC(ABC):
         action: np.ndarray,
         p_global: np.ndarray | None,
         sens: bool = False,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         """
         Compute the state-action value function for the given state and action.
 
@@ -261,7 +267,7 @@ class MPC(ABC):
             action: The action for which to compute the value function.
 
         Returns:
-            The state-action value function.
+            The state-action value function and dQ_dp_global if requested.
         """
 
         mpc_input = MPCInput(
@@ -269,7 +275,7 @@ class MPC(ABC):
         )
         mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
-        return mpc_output.Q, mpc_output.dvalue_dp_global
+        return mpc_output.Q, mpc_output.dvalue_dp_global  # type:ignore
 
     def policy(
         self,
@@ -277,7 +283,7 @@ class MPC(ABC):
         p_global: np.ndarray | None,
         sens: bool = False,
         use_adj_sens: bool = True,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         """
         Compute the policy for the given state.
 
@@ -286,9 +292,8 @@ class MPC(ABC):
             p_global: The global parameters.
             sens: Whether to compute the sensitivity of the policy with respect to the parameters.
             use_adj_sens: Whether to use adjoint sensitivity.
-
         Returns:
-            The policy.
+            The policy and du0_dp_global if requested.
         """
 
         mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
@@ -297,7 +302,7 @@ class MPC(ABC):
             mpc_input=mpc_input, dudp=sens, use_adj_sens=use_adj_sens
         )
 
-        return mpc_output.u_star[0], mpc_output.du0_dp_global
+        return mpc_output.u_star[0], mpc_output.du0_dp_global  # type: ignore
 
     def __call__(
         self,
@@ -305,6 +310,8 @@ class MPC(ABC):
         mpc_state: list[MPCState] | MPCState | None = None,
         dudx: bool = False,
         dudp: bool = False,
+        dvdx: bool = False,
+        dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, MPCState | list[MPCState]]:
@@ -316,6 +323,8 @@ class MPC(ABC):
             mpc_state: The iterate of the solver to use as initialization.
             dudx: Whether to compute the sensitivity of the action with respect to the state.
             dudp: Whether to compute the sensitivity of the action with respect to the parameters.
+            dvdx: Whether to compute the sensitivity of the value function with respect to the state.
+            dvdu: Whether to compute the sensitivity of the value function with respect to the action.
             dvdp: Whether to compute the sensitivity of the value function with respect to the parameters.
             use_adj_sens: Whether to use adjoint sensitivity.
 
@@ -330,16 +339,21 @@ class MPC(ABC):
                 mpc_state=mpc_state,  # type: ignore
                 dudx=dudx,
                 dudp=dudp,
+                dvdx=dvdx,
+                dvdu=dvdu,
                 dvdp=dvdp,
                 use_adj_sens=use_adj_sens,
             )
 
         return self._batch_solve(
             mpc_input=mpc_input,
-            mpc_state=mpc_state,  # type: ignore
+            mpc_state_given=mpc_state,  # type: ignore
             dudx=dudx,
             dudp=dudp,
+            dvdx=dvdx,
+            dvdu=dvdu,
             dvdp=dvdp,
+            use_adj_sens=use_adj_sens,
         )
 
     def _solve(
@@ -348,23 +362,11 @@ class MPC(ABC):
         mpc_state: MPCState | None = None,
         dudx: bool = False,
         dudp: bool = False,
+        dvdx: bool = False,
+        dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, MPCState]:
-        """Solve the OCP for the given input and state.
-
-        Args:
-            mpc_input: The input of the MPC controller.
-            mpc_state: The iterate of the solver to use as initialization.
-            dudx: Whether to compute the sensitivity of the action with respect to the state.
-            dudp: Whether to compute the sensitivity of the action with respect to the parameters.
-            dvdp: Whether to compute the sensitivity of the value function with respect to the parameters.
-            use_adj_sens: Whether to use adjoint sensitivity.
-
-        Returns:
-            mpc_output: The output of the MPC controller.
-            mpc_state: The MPCState (iterate of the solver).
-        """
         # initialize solvers
         if mpc_input is not None:
             initialize_ocp_solver(self.ocp_solver, mpc_input.parameters, mpc_state)
@@ -375,64 +377,82 @@ class MPC(ABC):
         # set initial control constraints
         if mpc_input.u0 is not None:
             set_ocp_solver_initial_control_constraints(self.ocp_solver, mpc_input.u0)
+            set_ocp_solver_initial_control_constraints(
+                self.ocp_sensitivity_solver, mpc_input.u0
+            )
+        elif dvdu:
+            raise ValueError("dvdu is only allowed if u0 is set in the input.")
 
         # solve
         kw = {}
 
         # TODO: Cover case where we do not want to do a forward evaluation
         kw["u_star"] = self.ocp_solver.solve_for_x0(
-            mpc_input.x0, fail_on_nonzero_status=False
+            mpc_input.x0, fail_on_nonzero_status=False, print_stats_on_failure=False
         )
 
-        if self.ocp_solver.status != 0:
-            raise Exception(
-                f"Solver failed with status {self.ocp_solver.status} for x0 {mpc_input.x0}."
-            )
+        status = self.ocp_solver.status
+        kw["status"] = status
 
         if dudx:
             kw["du0_dx0"] = self.ocp_solver.eval_solution_sensitivity(
-                stages=[0], with_respect_to="initial_state"
+                stages=0, with_respect_to="initial_state"
             )[1]
 
-        if dudp:
+        if dudp or dvdp:
             self.ocp_sensitivity_solver.load_iterate_from_flat_obj(
                 self.ocp_solver.store_iterate_to_flat_obj()
             )
 
             self.ocp_sensitivity_solver.solve_for_x0(
-                mpc_input.x0,
-                fail_on_nonzero_status=False,
-                print_stats_on_failure=False,
+                mpc_input.x0, fail_on_nonzero_status=False, print_stats_on_failure=False
             )
 
-            if not use_adj_sens:
-                kw["du0_dp_global"] = (
-                    self.ocp_sensitivity_solver.eval_solution_sensitivity(
-                        0, "p_global"
-                    )[1]
-                )
-            else:
-                kw["du0_dp_global"] = (
-                    self.ocp_sensitivity_solver.eval_adjoint_solution_sensitivity(
-                        seed_x=[],
-                        seed_u=[
-                            (
-                                0,
-                                np.eye((self.ocp.dims.nu)),
-                            )
-                        ],
-                        with_respect_to="p_global",
-                        sanity_checks=True,
+            if dudp:
+                if use_adj_sens:
+                    kw["du0_dp_global"] = (
+                        self.ocp_sensitivity_solver.eval_adjoint_solution_sensitivity(
+                            seed_x=[],
+                            seed_u=[
+                                (
+                                    0,
+                                    np.eye(self.ocp.dims.nu),  # type:ignore
+                                )
+                            ],
+                            with_respect_to="p_global",
+                            sanity_checks=True,
+                        )
+                    )
+                else:
+                    kw["du0_dp_global"] = (
+                        self.ocp_sensitivity_solver.eval_solution_sensitivity(
+                            0, "p_global"
+                        )[1]
+                    )
+
+            if dvdp:
+                kw["dvalue_dp_global"] = (
+                    self.ocp_sensitivity_solver.eval_and_get_optimal_value_gradient(
+                        "p_global"
                     )
                 )
-        if dvdp:
-            kw["dvalue_dp_global"] = (
-                self.ocp_solver.eval_and_get_optimal_value_gradient("p_global")
+
+        if dvdx:
+            kw["dvalue_dx0"] = self.ocp_solver.eval_and_get_optimal_value_gradient(
+                with_respect_to="initial_state"
             )
+
+        # NB: Assumes we are evaluating dQdu0 here
+        if dvdu:
+            kw["dvalue_du0"] = self.ocp_solver.get(0, "lam")[
+                : self.ocp_solver.acados_ocp.dims.nu
+            ]
+
         # unset initial control constraints
         if mpc_input.u0 is not None:
             kw["Q"] = self.ocp_solver.get_cost()
             unset_ocp_solver_initial_control_constraints(self.ocp_solver)
+            unset_ocp_solver_initial_control_constraints(self.ocp_sensitivity_solver)
         else:
             kw["V"] = self.ocp_solver.get_cost()
 
@@ -444,10 +464,13 @@ class MPC(ABC):
     def _batch_solve(
         self,
         mpc_input: MPCInput,
-        mpc_state: list[MPCState] | None = None,
+        mpc_state_given: list[MPCState] | None = None,
         dudx: bool = False,
         dudp: bool = False,
+        dvdx: bool = False,
+        dvdu: bool = False,
         dvdp: bool = False,
+        use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, list[MPCState]]:
         # get a single element from the batch
         def get_idx(data, index):
@@ -464,10 +487,13 @@ class MPC(ABC):
         for idx in range(batch_size):
             mpc_output, mpc_state = self._solve(
                 mpc_input=get_idx(mpc_input, idx),  # type: ignore
-                mpc_state=mpc_state[idx] if mpc_state is not None else None,
+                mpc_state=mpc_state_given[idx] if mpc_state_given is not None else None,
                 dudx=dudx,
                 dudp=dudp,
+                dvdx=dvdx,
+                dvdu=dvdu,
                 dvdp=dvdp,
+                use_adj_sens=use_adj_sens,
             )
 
             outputs.append(mpc_output)
@@ -479,7 +505,7 @@ class MPC(ABC):
                 return value
             return np.stack([getattr(output, key) for output in outputs])
 
-        mpc_output = MPCOutput({key: collate(key) for key in MPCOutput._fields})  # type: ignore
+        mpc_output = MPCOutput(**{key: collate(key) for key in MPCOutput._fields})  # type: ignore
 
         return mpc_output, states  # type: ignore
 

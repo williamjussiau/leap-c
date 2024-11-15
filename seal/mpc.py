@@ -63,8 +63,7 @@ class MPCOutput(NamedTuple):
 
     Attributes:
         status: The status of the solver.
-        u_star: The optimal control actions of the horizon.
-        x_star: The optimal states of the horizon.
+        u0: The first optimal action.
         Q: The state-action value function.
         V: The value function.
         dvalue_du0: The sensitivity of the value function with respect to the initial action.
@@ -74,8 +73,7 @@ class MPCOutput(NamedTuple):
     """
 
     status: np.ndarray | None = None
-    u_star: np.ndarray | None = None  # (B, N, u_dim) or (N, u_dim)
-    x_star: np.ndarray | None = None  # (B, N+1, x_dim)  or (N+1, x_dim)
+    u0: np.ndarray | None = None  # (B, u_dim) or (u_dim, )
     Q: np.ndarray | None = None  # (B, ) or (1, )
     V: np.ndarray | None = None  # (B, ) or (1, )
     dvalue_dx0: np.ndarray | None = None  # (B, x_dim) or (x_dim, )
@@ -302,7 +300,7 @@ class MPC(ABC):
             mpc_input=mpc_input, dudp=sens, use_adj_sens=use_adj_sens
         )
 
-        return mpc_output.u_star[0], mpc_output.du0_dp_global  # type: ignore
+        return mpc_output.u0, mpc_output.du0_dp_global
 
     def __call__(
         self,
@@ -387,8 +385,8 @@ class MPC(ABC):
         kw = {}
 
         # TODO: Cover case where we do not want to do a forward evaluation
-        kw["u_star"] = self.ocp_solver.solve_for_x0(
-            mpc_input.x0, fail_on_nonzero_status=False, print_stats_on_failure=False
+        kw["u0"] = self.ocp_solver.solve_for_x0(
+            mpc_input.x0, fail_on_nonzero_status=False
         )
 
         status = self.ocp_solver.status

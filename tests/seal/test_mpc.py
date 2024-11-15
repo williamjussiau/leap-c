@@ -150,7 +150,11 @@ def run_test_policy_for_varying_parameters(
             state=x0, p_global=test_param[:, i], sens=True, use_adj_sens=use_adj_sens
         )
         dpidp_i = sens[0]
-        policy.append(pi_i)
+        if not pi_i.shape == (1,):
+            raise NotImplementedError(
+                "This was implemented for scalar policies, but could be extended for vector policies in the future."
+            )
+        policy.append(pi_i.item())
         policy_gradient.append(dpidp_i)
 
     policy = np.array(policy)

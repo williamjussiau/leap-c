@@ -171,7 +171,7 @@ class MPCSolutionFunction(autograd.Function):
             dvdp=need_dp_global,
             use_adj_sens=True,
         )
-        u_star = mpc_output.u_star if u0 is None else None  # type:ignore
+        u_star = mpc_output.u0 if u0 is None else None  # type:ignore
         dudp_global = mpc_output.du0_dp_global if need_dudp_global else None  # type:ignore
         dudx0 = mpc_output.du0_dx0 if need_dudx0 else None  # type:ignore
         dvaluedp_global = mpc_output.dvalue_dp_global if need_dp_global else None  # type:ignore

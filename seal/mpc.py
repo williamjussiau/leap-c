@@ -72,7 +72,7 @@ class MPCOutput(NamedTuple):
         du0_dx0: The sensitivity of the initial action with respect to the initial state.
     """
 
-    status: np.ndarray | None = None
+    status: np.ndarray | None = None  # (B, ) or (1, )
     u0: np.ndarray | None = None  # (B, u_dim) or (u_dim, )
     Q: np.ndarray | None = None  # (B, ) or (1, )
     V: np.ndarray | None = None  # (B, ) or (1, )
@@ -83,18 +83,9 @@ class MPCOutput(NamedTuple):
     du0_dx0: np.ndarray | None = None  # (B, u_dim, x_dim) or (u_dim, x_dim)
 
 
-def initialize_ocp_solver(
-    ocp_solver: AcadosOcpSolver,
-    mpc_parameter: MPCParameter | None,
-    ocp_iterate: AcadosOcpIterate | AcadosOcpFlattenedIterate | None,
+def set_ocp_solver_mpc_params(
+    ocp_solver: AcadosOcpSolver, mpc_parameter: MPCParameter | None
 ) -> None:
-    """Initializes the fields of the OCP solvers with the given values.
-
-    Args:
-        mpc_parameter: The parameters to set in the OCP solver.
-        acados_ocp_iterate: The iterate of the solver to use as initialization.
-    """
-
     if mpc_parameter is not None:
         if mpc_parameter.p_global is not None:
             ocp_solver.set_p_global_and_precompute_dependencies(mpc_parameter.p_global)
@@ -111,6 +102,21 @@ def initialize_ocp_solver(
             else:
                 for stage, p in enumerate(mpc_parameter.p_stagewise):
                     ocp_solver.set(stage, "p", p)
+
+
+def initialize_ocp_solver(
+    ocp_solver: AcadosOcpSolver,
+    mpc_parameter: MPCParameter | None,
+    ocp_iterate: AcadosOcpIterate | AcadosOcpFlattenedIterate | None,
+) -> None:
+    """Initializes the fields of the OCP solvers with the given values.
+
+    Args:
+        mpc_parameter: The parameters to set in the OCP solver.
+        acados_ocp_iterate: The iterate of the solver to use as initialization.
+    """
+
+    set_ocp_solver_mpc_params(ocp_solver, mpc_parameter)
 
     if isinstance(ocp_iterate, AcadosOcpIterate):
         ocp_solver.load_iterate_from_obj(ocp_iterate)
@@ -131,6 +137,21 @@ def unset_ocp_solver_initial_control_constraints(ocp_solver: AcadosOcpSolver) ->
     """Unset the initial control constraints of the OCP solver."""
     ocp_solver.constraints_set(0, "lbu", ocp_solver.acados_ocp.constraints.lbu)  # type: ignore
     ocp_solver.constraints_set(0, "ubu", ocp_solver.acados_ocp.constraints.ubu)  # type: ignore
+
+
+def set_ocp_solver_to_default(
+    ocp_solver: AcadosOcpSolver, default_mpc_parameters: MPCParameter, unset_u0: bool
+) -> None:
+    """Resets the ocp solver to remove any "state" to be carried over in the next call.
+    This entails:
+    - Setting all Iterate-Variables to 0.
+    - Setting the parameters to the default values.
+    - Unsetting the initial control constraints if they were set.
+    """
+    if unset_u0:
+        unset_ocp_solver_initial_control_constraints(ocp_solver)
+    set_ocp_solver_mpc_params(ocp_solver, default_mpc_parameters)
+    ocp_solver.reset()
 
 
 def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
@@ -224,12 +245,12 @@ class MPC(ABC):
 
     @property
     def default_p_global(self) -> np.ndarray | None:
-        """Return the dimension of p_global."""
+        """Return the default p_global."""
         return self.ocp.p_global_values if self.ocp.model.p_global is not None else None
 
     @property
     def default_p_stagewise(self) -> np.ndarray | None:
-        """Return the dimension of p_stagewise."""
+        """Return the default p_stagewise."""
         return self.ocp.parameter_values if self.ocp.model.p is not None else None
 
     def state_value(
@@ -365,9 +386,10 @@ class MPC(ABC):
         dvdp: bool = False,
         use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, MPCState]:
+        use_sensitivity_solver = dudx or dudp or dvdp
         # initialize solvers
-        if mpc_input is not None:
-            initialize_ocp_solver(self.ocp_solver, mpc_input.parameters, mpc_state)
+        initialize_ocp_solver(self.ocp_solver, mpc_input.parameters, mpc_state)
+        if use_sensitivity_solver:
             initialize_ocp_solver(
                 self.ocp_sensitivity_solver, mpc_input.parameters, mpc_state
             )
@@ -390,14 +412,9 @@ class MPC(ABC):
         )
 
         status = self.ocp_solver.status
-        kw["status"] = status
+        kw["status"] = np.array([status])
 
-        if dudx:
-            kw["du0_dx0"] = self.ocp_solver.eval_solution_sensitivity(
-                stages=0, with_respect_to="initial_state"
-            )[1]
-
-        if dudp or dvdp:
+        if use_sensitivity_solver:
             self.ocp_sensitivity_solver.load_iterate_from_flat_obj(
                 self.ocp_solver.store_iterate_to_flat_obj()
             )
@@ -405,6 +422,11 @@ class MPC(ABC):
             self.ocp_sensitivity_solver.solve_for_x0(
                 mpc_input.x0, fail_on_nonzero_status=False, print_stats_on_failure=False
             )
+
+            if dudx:
+                kw["du0_dx0"] = self.ocp_sensitivity_solver.eval_solution_sensitivity(
+                    stages=0, with_respect_to="initial_state"
+                )[1]
 
             if dudp:
                 if use_adj_sens:
@@ -448,14 +470,32 @@ class MPC(ABC):
 
         # unset initial control constraints
         if mpc_input.u0 is not None:
-            kw["Q"] = self.ocp_solver.get_cost()
+            kw["Q"] = np.array([self.ocp_solver.get_cost()])
             unset_ocp_solver_initial_control_constraints(self.ocp_solver)
             unset_ocp_solver_initial_control_constraints(self.ocp_sensitivity_solver)
         else:
-            kw["V"] = self.ocp_solver.get_cost()
+            kw["V"] = np.array([self.ocp_solver.get_cost()])
 
         # get mpc state
         mpc_state = self.ocp_solver.store_iterate_to_flat_obj()
+
+        # Set solvers to default
+        default_params = MPCParameter(
+            p_global=self.default_p_global,
+            p_stagewise=np.tile(self.default_p_stagewise, (self.N + 1, 1)),  # type:ignore
+        )
+        unset_u0 = True if mpc_input.u0 is not None else False
+        set_ocp_solver_to_default(
+            ocp_solver=self.ocp_solver,
+            default_mpc_parameters=default_params,
+            unset_u0=unset_u0,
+        )
+        if use_sensitivity_solver:
+            set_ocp_solver_to_default(
+                ocp_solver=self.ocp_sensitivity_solver,
+                default_mpc_parameters=default_params,
+                unset_u0=unset_u0,
+            )
 
         return MPCOutput(**kw), mpc_state
 

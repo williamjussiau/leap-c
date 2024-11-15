@@ -3,7 +3,8 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from seal.mpc import MPC
+from seal.examples.linear_system import LinearSystemMPC
+from seal.mpc import MPC, MPCInput, MPCOutput, MPCParameter
 
 
 def find_param_index_and_increment(test_param):
@@ -69,6 +70,31 @@ def compare_acados_value_gradients_to_finite_differences(
     return absolute_difference
 
 
+def mpc_outputs_assert_allclose(
+    mpc_output: MPCOutput, mpc_output2: MPCOutput, test_u_star: bool
+):
+    allclose = True
+    for fld in mpc_output._fields:
+        val1 = getattr(mpc_output, fld)
+        val2 = getattr(mpc_output2, fld)
+        if fld == "u0" and not test_u_star:
+            continue  # Testing u_star when different u0 were given makes no sense
+        if isinstance(val1, np.ndarray):
+            tolerance = (
+                1e-5 if not fld.startswith("d") else 1e-3
+            )  # 1e-3 is probably close enough for gradients, at least thats also what we do in pytorch.gradcheck wrt the numerical gradient
+            assert np.allclose(
+                val1, val2, atol=tolerance
+            ), f"Field {fld} not close, maximal difference is {np.abs(val1 - val2).max()}"
+        elif isinstance(val1, type(None)):
+            assert val1 == val2
+        else:
+            raise NotImplementedError(
+                "Only np.ndarray fields known. Did new fields get added to MPCOutput?"
+            )
+    return allclose
+
+
 def run_test_state_value_for_varying_parameters(
     mpc: MPC, x0, test_param, plot: bool = False
 ):
@@ -81,7 +107,7 @@ def run_test_state_value_for_varying_parameters(
     value_gradient = []
     for i in range(np_test):
         v_i, dvdp_i = mpc.state_value(state=x0, p_global=test_param[:, i], sens=True)
-        value.append(v_i)
+        value.append(v_i.item())
         value_gradient.append(dvdp_i)
     value = np.array(value)
     value_gradient = np.array(value_gradient)
@@ -111,7 +137,7 @@ def run_test_state_action_value_for_varying_parameters(
         q_i, dqdp_i = mpc.state_action_value(
             state=x0, action=u0, p_global=test_param[:, i], sens=True
         )
-        value.append(q_i)
+        value.append(q_i.item())
         value_gradient.append(dqdp_i)
     value = np.array(value)
     value_gradient = np.array(value_gradient)
@@ -140,12 +166,6 @@ def run_test_policy_for_varying_parameters(
     policy_gradient = []
 
     for i in range(np_test):
-        # p = MPCParameter(
-        #     p_global_learnable=None,
-        #     p_global_non_learnable=test_param[:, i],
-        #     p_stagewise=None,
-        #     p_stagewise_sparse_idx=None,
-        # )
         pi_i, sens = mpc.policy(
             state=x0, p_global=test_param[:, i], sens=True, use_adj_sens=use_adj_sens
         )
@@ -322,6 +342,45 @@ def test_state_action_value(
         )
 
         assert np.median(absolute_difference) <= 1e-1
+
+
+def test_statelessness(
+    x0: np.ndarray = np.array([0.5, 0.5]), u0: np.ndarray = np.array([0.5])
+):
+    # Create MPC with some stateless and some global parameters
+    lin_mpc = LinearSystemMPC(learnable_params=["A", "B", "Q", "R", "f"])
+    mpc_input_standard = MPCInput(x0=x0, u0=u0)
+    solution_standard, _ = lin_mpc(
+        mpc_input=mpc_input_standard, dudp=True, dvdp=True, dudx=True
+    )
+    p_global = lin_mpc.default_p_global
+    assert p_global is not None
+    p_global = p_global + np.ones(p_global.shape[0]) * 0.01
+    p_stagewise = lin_mpc.default_p_stagewise
+    assert p_stagewise is not None
+    p_stagewise = p_stagewise + np.ones(p_stagewise.shape[0]) * 0.01
+    assert (
+        len(p_stagewise.shape) == 1
+    ), f"I assumed this would be flat, but shape is {p_stagewise.shape}"
+    p_stagewise = np.tile(p_stagewise, (lin_mpc.N + 1, 1))
+    params = MPCParameter(p_global, p_stagewise)
+    x0_different = x0 - 0.01
+    u0_different = u0 - 0.01
+    mpc_input_different = MPCInput(x0=x0_different, u0=u0_different, parameters=params)
+    solution_different, _ = lin_mpc(
+        mpc_input=mpc_input_different, dudp=True, dvdp=True, dudx=True
+    )
+    # Use this as proxy to verify the different solution is different enough
+    assert not np.allclose(
+        solution_standard.Q,  # type:ignore
+        solution_different.Q,  # type:ignore
+    )
+    solution_supposedly_standard, _ = lin_mpc(
+        mpc_input=mpc_input_standard, dudp=True, dvdp=True, dudx=True
+    )
+    mpc_outputs_assert_allclose(
+        solution_standard, solution_supposedly_standard, test_u_star=True
+    )
 
 
 def test_closed_loop(

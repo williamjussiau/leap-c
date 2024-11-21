@@ -32,7 +32,7 @@ class LinearSystemMPC(MPC):
 
     def __init__(
         self,
-        params: dict[str, np.ndarray] = None,
+        params: dict[str, np.ndarray] | None = None,
         learnable_params: list[str] | None = None,
         discount_factor: float = 0.99,
     ):
@@ -184,25 +184,27 @@ def export_parametric_ocp(
     param: dict[str, np.ndarray],
     cost_type="EXTERNAL",
     name: str = "lti",
-    learnable_params: list[str] = [],
+    learnable_params: list[str] | None = None,
 ) -> AcadosOcp:
     """
     Export a parametric optimal control problem (OCP) for a discrete-time linear time-invariant (LTI) system.
 
     Parameters:
-    -----------
-    param : dict
-        Dictionary containing the parameters of the system. Keys should include "A", "B", "b", "V_0", and "f".
-    cost_type : str, optional
-        Type of cost function to use. Options are "LINEAR_LS" or "EXTERNAL".
-    name : str, optional
-        Name of the model.
+        param:
+            Dictionary containing the parameters of the system. Keys should include "A", "B", "b", "V_0", and "f".
+        cost_type:
+            Type of cost function to use. Options are "LINEAR_LS" or "EXTERNAL".
+        name:
+            Name of the model.
+        learnable_params:
+            List of parameters that should be learnable.
 
     Returns:
-    --------
-    AcadosOcp
-        An instance of the AcadosOcp class representing the optimal control problem.
+        AcadosOcp
+            An instance of the AcadosOcp class representing the optimal control problem.
     """
+    if learnable_params is None:
+        learnable_params = []
     ocp = AcadosOcp()
 
     ocp.model.name = name

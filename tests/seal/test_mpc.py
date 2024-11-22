@@ -649,9 +649,9 @@ def test_mpc_solve_and_batch_solve_on_batch_p_global(
         )
     )
 
-    print(
-        f"Norm difference between _solve and _batch_solve: {diff_solve_batch_solve_norm}"
-    )
+    assert (
+        diff_solve_batch_solve_norm == 0.0
+    ), f"Norm difference between _solve and _batch_solve should be 0, but is: {diff_solve_batch_solve_norm}"
 
     for key in diff_solve_batch_solve.keys():
         for field in diff_solve_batch_solve[key].keys():

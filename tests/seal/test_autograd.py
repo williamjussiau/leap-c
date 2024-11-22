@@ -4,22 +4,24 @@ import torch
 from seal.examples.linear_system import LinearSystemMPC
 from seal.mpc import MPCParameter
 from seal.nn.modules import CleanseAndReducePerSampleLoss, MPCSolutionModule
+import pytest
 
 
 def test_MPCSolutionModule_on_LinearSystemMPC(
     learnable_linear_mpc: LinearSystemMPC,
     linear_mpc_test_params: np.ndarray,
     x0: np.ndarray = np.array([0.1, 0.1]),
-    batch_size: int = 2,
 ):
+    batch_size = linear_mpc_test_params.shape[0]
     assert batch_size <= 10, "Using batch_sizes too large will make the test very slow."
-    test_param = linear_mpc_test_params[:batch_size]  # batch_size-many (#p_glob, 10)
-    different_params = []
+
+    varying_params_to_test = [0, 6, 12, 14]  # A_0, Q_0, b_1, f_1
+    chosen_samples = []
     for i in range(batch_size):
-        different_params.append(
-            test_param[i][:, i]  # Sort-of-diagonal
-        )
-    test_param = np.stack(different_params, axis=0)  # (batch_size, #p_glob)
+        vary_idx = varying_params_to_test[i % len(varying_params_to_test)]
+        chosen_samples.append(linear_mpc_test_params[i, :, vary_idx].squeeze())
+    test_param = np.stack(chosen_samples, axis=0)
+    assert test_param.shape == (batch_size, 17)  # Sanity check
 
     p_rests = MPCParameter(None, None, None)
 
@@ -229,3 +231,7 @@ def test_CleanseAndReduceMultipleBatchAndSampleDims():
         assert False
     except ValueError:
         assert True
+
+
+if __name__ == "__main__":
+    pytest.main([__file__])

@@ -223,7 +223,7 @@ class MPCSolutionFunction(autograd.Function):
                     "Something went wrong: The necessary sensitivities dvaluedx0 from the forward pass do not exist."
                 )
             dvaluedx0 = torch.tensor(dvaluedx0, device=device, dtype=dtype)
-            grad_x = torch.einsum("bj,bi->bj", dvaluedx0, dLossdvalue)
+            grad_x = torch.einsum("bj,b->bj", dvaluedx0, dLossdvalue)
             if need_dudx0:
                 dudx0 = ctx.dudx0
                 if dudx0 is None:
@@ -242,7 +242,7 @@ class MPCSolutionFunction(autograd.Function):
                     "Something went wrong: The necessary sensitivities dvaluedp_global from the forward pass do not exist."
                 )
             dvaluedp_global = torch.tensor(dvaluedp_global, device=device, dtype=dtype)
-            grad_p = torch.einsum("bj,bi->bj", dvaluedp_global, dLossdvalue)
+            grad_p = torch.einsum("bj,b->bj", dvaluedp_global, dLossdvalue)
             if need_dudp_global:
                 dudp_global = ctx.dudp_global
                 if dudp_global is None:
@@ -262,7 +262,7 @@ class MPCSolutionFunction(autograd.Function):
             #         "Something went wrong: The necessary sensitivities dvaluedu0 from the forward pass do not exist."
             #     )
             # dvaluedu0 = torch.tensor(dvaluedu0, device=device, dtype=dtype)
-            # grad_u = torch.einsum("bj,bi->bj", dvaluedu0, dLdvalue)
+            # grad_u = torch.einsum("bj,b->bj", dvaluedu0, dLdvalue)
             if torch.any(dLossdvalue):
                 raise ValueError(
                     "Sensitivities of value for u0 are not implemented yet."

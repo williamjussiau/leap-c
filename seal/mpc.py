@@ -6,7 +6,7 @@ from typing import Callable, List, NamedTuple
 
 import casadi as ca
 import numpy as np
-from acados_template import AcadosOcp, AcadosOcpSolver
+from acados_template import AcadosOcp, AcadosOcpBatchSolver, AcadosOcpSolver
 from acados_template.acados_ocp_iterate import (
     AcadosOcpFlattenedIterate,
     AcadosOcpIterate,
@@ -38,6 +38,32 @@ class MPCParameter(NamedTuple):
     p_stagewise: List[np.ndarray] | np.ndarray | None = None
     p_stagewise_sparse_idx: List[np.ndarray] | np.ndarray | None = None
 
+    def is_batched(self) -> bool:
+        """The empty MPCParameter counts as non-batched."""
+        if self.p_global is not None:
+            return self.p_global.ndim == 2
+        elif self.p_stagewise is not None:
+            return self.p_stagewise[0].ndim == 3
+        else:
+            return False
+
+    def get_sample(self, i: int) -> "MPCParameter":
+        """Get the sample at index i from the batch."""
+        if not self.is_batched():
+            raise ValueError("Cannot sample from non-batched MPCParameter.")
+        p_global = self.p_global[i] if self.p_global is not None else None
+        p_stagewise = self.p_stagewise[i] if self.p_stagewise is not None else None
+        p_stagewise_sparse_idx = (
+            self.p_stagewise_sparse_idx[i]
+            if self.p_stagewise_sparse_idx is not None
+            else None
+        )
+        return MPCParameter(
+            p_global=p_global,
+            p_stagewise=p_stagewise,
+            p_stagewise_sparse_idx=p_stagewise_sparse_idx,
+        )
+
 
 MPCState = AcadosOcpFlattenedIterate
 
@@ -55,6 +81,26 @@ class MPCInput(NamedTuple):
     x0: np.ndarray
     u0: np.ndarray | None = None
     parameters: MPCParameter | None = None
+
+    def is_batched(self) -> bool:
+        """The empty MPCParameter counts as non-batched."""
+        if self.x0 is not None:
+            return self.x0.ndim == 2
+        elif self.u0 is not None:
+            return self.u0.ndim == 2
+        else:
+            return False
+
+    def get_sample(self, i: int) -> "MPCInput":
+        """Get the sample at index i from the batch."""
+        if not self.is_batched():
+            raise ValueError("Cannot sample from non-batched MPCInput.")
+        x0 = self.x0[i]
+        u0 = self.u0[i] if self.u0 is not None else None
+        parameters = (
+            self.parameters.get_sample(i) if self.parameters is not None else None
+        )
+        return MPCInput(x0=x0, u0=u0, parameters=parameters)
 
 
 class MPCOutput(NamedTuple):
@@ -86,6 +132,10 @@ class MPCOutput(NamedTuple):
 def set_ocp_solver_mpc_params(
     ocp_solver: AcadosOcpSolver, mpc_parameter: MPCParameter | None
 ) -> None:
+    if mpc_parameter is None:
+        return
+    if mpc_parameter.is_batched():
+        raise ValueError("MPCParameter must be non-batched.")
     if mpc_parameter is not None:
         if mpc_parameter.p_global is not None:
             ocp_solver.set_p_global_and_precompute_dependencies(mpc_parameter.p_global)
@@ -104,16 +154,34 @@ def set_ocp_solver_mpc_params(
                     ocp_solver.set(stage, "p", p)
 
 
+def set_ocp_solver_initial_condition(ocp_solver: AcadosOcpSolver, mpc_input: MPCInput):
+    ocp_solver.set(0, "x", mpc_input.x0)
+    ocp_solver.constraints_set(0, "lbx", mpc_input.x0)
+    ocp_solver.constraints_set(0, "ubx", mpc_input.x0)
+    if mpc_input.u0 is not None:
+        ocp_solver.set(0, "u", mpc_input.u0)
+        ocp_solver.constraints_set(0, "lbu", mpc_input.u0)
+        ocp_solver.constraints_set(0, "ubu", mpc_input.u0)
+
+
+def set_batch_ocp_solver_initial_condition(
+    ocp_solver: AcadosOcpBatchSolver, mpc_input: MPCInput
+):
+    for i, ocp in enumerate(ocp_solver.ocp_solvers):
+        set_ocp_solver_initial_condition(ocp, mpc_input.get_sample(i))
+
+
 def initialize_ocp_solver(
     ocp_solver: AcadosOcpSolver,
     mpc_parameter: MPCParameter | None,
     ocp_iterate: AcadosOcpIterate | AcadosOcpFlattenedIterate | None,
 ) -> None:
-    """Initializes the fields of the OCP solvers with the given values.
+    """Initializes the fields of the OCP solver with the given values.
 
     Args:
-        mpc_parameter: The parameters to set in the OCP solver.
-        acados_ocp_iterate: The iterate of the solver to use as initialization.
+        ocp_solver: The OCP solver to initialize.
+        mpc_parameter: The parameters to set in the OCP solver. Must be non-batched.
+        ocp_iterate: The iterate of the solver to use as initialization.
     """
 
     set_ocp_solver_mpc_params(ocp_solver, mpc_parameter)
@@ -122,6 +190,28 @@ def initialize_ocp_solver(
         ocp_solver.load_iterate_from_obj(ocp_iterate)
     elif isinstance(ocp_iterate, AcadosOcpFlattenedIterate):
         ocp_solver.load_iterate_from_flat_obj(ocp_iterate)
+
+
+def initialize_batch_ocp_solver(
+    batch_ocp_solver: AcadosOcpBatchSolver,
+    mpc_parameters: MPCParameter | None,
+    ocp_iterates: list[AcadosOcpIterate] | list[AcadosOcpFlattenedIterate] | None,
+) -> None:
+    """Initializes the fields of the OCP solvers with the given values.
+
+    Args:
+        mpc_parameters: The parameters to set in the OCP solver. Must be batched (with size self.n_batch) if not None.
+        ocp_iterates: The iterates of the solver to use as initialization. Must be a list of length self.n_batch.
+    """
+
+    for i, ocp_solver in enumerate(batch_ocp_solver.ocp_solvers):
+        params = mpc_parameters.get_sample(i) if mpc_parameters is not None else None
+
+        initialize_ocp_solver(
+            ocp_solver=ocp_solver,
+            mpc_parameter=params,
+            ocp_iterate=ocp_iterates[i] if ocp_iterates is not None else None,
+        )
 
 
 def set_ocp_solver_initial_control_constraints(
@@ -133,14 +223,32 @@ def set_ocp_solver_initial_control_constraints(
     ocp_solver.constraints_set(0, "ubu", u0)
 
 
+def set_ocp_batch_solver_initial_control_constraints(
+    ocp_batch_solver: AcadosOcpBatchSolver, u0: np.ndarray
+):
+    for i_batch, ocp_solver in enumerate(ocp_batch_solver.ocp_solvers):
+        # TODO: Check u0 dimension
+        set_ocp_solver_initial_control_constraints(ocp_solver, u0[i_batch])
+
+
 def unset_ocp_solver_initial_control_constraints(ocp_solver: AcadosOcpSolver) -> None:
     """Unset the initial control constraints of the OCP solver."""
     ocp_solver.constraints_set(0, "lbu", ocp_solver.acados_ocp.constraints.lbu)  # type: ignore
     ocp_solver.constraints_set(0, "ubu", ocp_solver.acados_ocp.constraints.ubu)  # type: ignore
 
 
+def unset_ocp_batch_solver_initial_control_constraints(
+    ocp_batch_solver: AcadosOcpBatchSolver,
+):
+    """Unset the initial control constraints of the OCP batch solver."""
+    for ocp_solver in ocp_batch_solver.ocp_solvers:
+        unset_ocp_solver_initial_control_constraints(ocp_solver)
+
+
 def set_ocp_solver_to_default(
-    ocp_solver: AcadosOcpSolver, default_mpc_parameters: MPCParameter, unset_u0: bool
+    ocp_solver: AcadosOcpSolver | AcadosOcpBatchSolver,
+    default_mpc_parameters: MPCParameter,
+    unset_u0: bool,
 ) -> None:
     """Resets the ocp solver to remove any "state" to be carried over in the next call.
     This entails:
@@ -148,10 +256,17 @@ def set_ocp_solver_to_default(
     - Setting the parameters to the default values.
     - Unsetting the initial control constraints if they were set.
     """
-    if unset_u0:
-        unset_ocp_solver_initial_control_constraints(ocp_solver)
-    set_ocp_solver_mpc_params(ocp_solver, default_mpc_parameters)
-    ocp_solver.reset()
+    if isinstance(ocp_solver, AcadosOcpSolver):
+        if unset_u0:
+            unset_ocp_solver_initial_control_constraints(ocp_solver)
+        set_ocp_solver_mpc_params(ocp_solver, default_mpc_parameters)
+        ocp_solver.reset()
+    else:
+        for ocp_solver in ocp_solver.ocp_solvers:
+            if unset_u0:
+                unset_ocp_solver_initial_control_constraints(ocp_solver)
+            set_ocp_solver_mpc_params(ocp_solver, default_mpc_parameters)
+            ocp_solver.reset()
 
 
 def set_discount_factor(ocp_solver: AcadosOcpSolver, discount_factor: float) -> None:
@@ -170,6 +285,7 @@ class MPC(ABC):
         export_directory_sensitivity: Path | None = None,
         ocp_solver_backup_fn: Callable | None = None,
         cleanup: bool = True,
+        n_batch: int = 1,
     ):
         """
         Initialize the MPC object.
@@ -183,6 +299,7 @@ class MPC(ABC):
             ocp_solver_backup_fn: A function that returns a backup ocp solver iterate to be used in case the solver fails.
             cleanup: Whether to clean up the export directory on exit or
                 when the object is deleted.
+            n_batch: Number of batched solvers to use.
         """
         self.ocp = ocp
 
@@ -211,6 +328,9 @@ class MPC(ABC):
 
         self.ocp_solver_backup_fn = ocp_solver_backup_fn
 
+        # size of solver batch
+        self.n_batch = n_batch
+
         # constraints and cost functions
         self._h_fn = None
         self._cost_fn = None
@@ -222,6 +342,11 @@ class MPC(ABC):
         if self._discount_factor is not None:
             set_discount_factor(solver, self._discount_factor)
 
+        default_params = MPCParameter(
+            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
+        )
+        set_ocp_solver_to_default(solver, default_params, unset_u0=True)
+
         return solver
 
     @cached_property
@@ -231,13 +356,45 @@ class MPC(ABC):
         if self._discount_factor is not None:
             set_discount_factor(solver, self._discount_factor)
 
+        default_params = MPCParameter(
+            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
+        )
+        set_ocp_solver_to_default(solver, default_params, unset_u0=True)
+
         return solver
+
+    @cached_property
+    def ocp_batch_solver(self) -> AcadosOcpBatchSolver:
+        batch_solver = AcadosOcpBatchSolver(self.ocp, self.n_batch)
+
+        default_params = MPCParameter(
+            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
+        )
+        if self._discount_factor is not None:
+            for solver in batch_solver.ocp_solvers:
+                set_discount_factor(solver, self._discount_factor)
+        set_ocp_solver_to_default(batch_solver, default_params, unset_u0=True)
+        return batch_solver
+
+    @cached_property
+    def ocp_batch_sensitivity_solver(self) -> AcadosOcpBatchSolver:
+        batch_solver = AcadosOcpBatchSolver(self.ocp_sensitivity, self.n_batch)
+
+        default_params = MPCParameter(
+            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
+        )
+        if self._discount_factor is not None:
+            for solver in batch_solver.ocp_solvers:
+                set_discount_factor(solver, self._discount_factor)
+        set_ocp_solver_to_default(batch_solver, default_params, unset_u0=True)
+        return batch_solver
 
     @property
     def p_global_dim(self) -> int:
         """Return the dimension of p_global."""
-        # TODO: Implement this
-        raise NotImplementedError()
+        return (
+            self.default_p_global.shape[0] if self.default_p_global is not None else 0
+        )
 
     @property
     def N(self) -> int:
@@ -387,41 +544,50 @@ class MPC(ABC):
         use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, MPCState]:
         use_sensitivity_solver = dudx or dudp or dvdp
-        # initialize solvers
-        initialize_ocp_solver(self.ocp_solver, mpc_input.parameters, mpc_state)
+
+        initialize_ocp_solver(
+            ocp_solver=self.ocp_solver,
+            mpc_parameter=mpc_input.parameters,
+            ocp_iterate=mpc_state,
+        )
+        set_ocp_solver_initial_condition(
+            ocp_solver=self.ocp_solver, mpc_input=mpc_input
+        )
+
         if use_sensitivity_solver:
             initialize_ocp_solver(
-                self.ocp_sensitivity_solver, mpc_input.parameters, mpc_state
+                ocp_solver=self.ocp_sensitivity_solver,
+                mpc_parameter=mpc_input.parameters,
+                ocp_iterate=mpc_state,
+            )
+            set_ocp_solver_initial_condition(
+                ocp_solver=self.ocp_sensitivity_solver, mpc_input=mpc_input
             )
 
-        # set initial control constraints
-        if mpc_input.u0 is not None:
-            set_ocp_solver_initial_control_constraints(self.ocp_solver, mpc_input.u0)
-            set_ocp_solver_initial_control_constraints(
-                self.ocp_sensitivity_solver, mpc_input.u0
-            )
-        elif dvdu:
+        if mpc_input.u0 is not None and dvdu:
             raise ValueError("dvdu is only allowed if u0 is set in the input.")
+
+        # TODO: Cover case where we do not want to do a forward evaluation
+        self.ocp_solver.solve()
 
         # solve
         kw = {}
 
-        # TODO: Cover case where we do not want to do a forward evaluation
-        kw["u0"] = self.ocp_solver.solve_for_x0(
-            mpc_input.x0, fail_on_nonzero_status=False
-        )
+        kw["status"] = np.array([self.ocp_solver.status])
 
-        status = self.ocp_solver.status
-        kw["status"] = np.array([status])
+        kw["u0"] = self.ocp_solver.get(0, "u")
+
+        if mpc_input.u0 is not None:
+            kw["Q"] = np.array([self.ocp_solver.get_cost()])
+        else:
+            kw["V"] = np.array([self.ocp_solver.get_cost()])
 
         if use_sensitivity_solver:
             self.ocp_sensitivity_solver.load_iterate_from_flat_obj(
                 self.ocp_solver.store_iterate_to_flat_obj()
             )
 
-            self.ocp_sensitivity_solver.solve_for_x0(
-                mpc_input.x0, fail_on_nonzero_status=False, print_stats_on_failure=False
-            )
+            self.ocp_sensitivity_solver.solve()
 
             if dudx:
                 kw["du0_dx0"] = self.ocp_sensitivity_solver.eval_solution_sensitivity(
@@ -468,14 +634,6 @@ class MPC(ABC):
                 : self.ocp_solver.acados_ocp.dims.nu
             ]
 
-        # unset initial control constraints
-        if mpc_input.u0 is not None:
-            kw["Q"] = np.array([self.ocp_solver.get_cost()])
-            unset_ocp_solver_initial_control_constraints(self.ocp_solver)
-            unset_ocp_solver_initial_control_constraints(self.ocp_sensitivity_solver)
-        else:
-            kw["V"] = np.array([self.ocp_solver.get_cost()])
-
         # get mpc state
         mpc_state = self.ocp_solver.store_iterate_to_flat_obj()
 
@@ -510,42 +668,162 @@ class MPC(ABC):
         dvdp: bool = False,
         use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, list[MPCState]]:
-        # get a single element from the batch
-        def get_idx(data, index):
-            if isinstance(data, tuple) and hasattr(data, "_fields"):  # namedtuple
-                elem_type = type(data)
-                return elem_type(*(get_idx(elem, index) for elem in data))  # type: ignore
+        use_sensitivity_solver = dudx or dudp or dvdp
 
-            return None if data is None else data[index]
+        initialize_batch_ocp_solver(
+            batch_ocp_solver=self.ocp_batch_solver,
+            mpc_parameters=mpc_input.parameters,  # type: ignore
+            ocp_iterates=mpc_state_given,
+        )
+        set_batch_ocp_solver_initial_condition(self.ocp_batch_solver, mpc_input)
 
-        batch_size = mpc_input.x0.shape[0]
-        outputs = []
-        states = []
-
-        for idx in range(batch_size):
-            mpc_output, mpc_state = self._solve(
-                mpc_input=get_idx(mpc_input, idx),  # type: ignore
-                mpc_state=mpc_state_given[idx] if mpc_state_given is not None else None,
-                dudx=dudx,
-                dudp=dudp,
-                dvdx=dvdx,
-                dvdu=dvdu,
-                dvdp=dvdp,
-                use_adj_sens=use_adj_sens,
+        if use_sensitivity_solver:
+            initialize_batch_ocp_solver(
+                batch_ocp_solver=self.ocp_batch_sensitivity_solver,
+                mpc_parameters=mpc_input.parameters,  # type: ignore
+                ocp_iterates=mpc_state_given,
+            )
+            set_batch_ocp_solver_initial_condition(
+                self.ocp_batch_sensitivity_solver, mpc_input
             )
 
-            outputs.append(mpc_output)
-            states.append(mpc_state)
+        if mpc_input.u0 is not None and dvdu:
+            raise ValueError("dvdu is only allowed if u0 is set in the input.")
 
-        def collate(key):
-            value = getattr(outputs[0], key)
-            if value is None:
-                return value
-            return np.stack([getattr(output, key) for output in outputs])
+        self.ocp_batch_solver.solve()
 
-        mpc_output = MPCOutput(**{key: collate(key) for key in MPCOutput._fields})  # type: ignore
+        kw = {}
+        kw["status"] = np.array(
+            [ocp_solver.status for ocp_solver in self.ocp_batch_solver.ocp_solvers]
+        )
 
-        return mpc_output, states  # type: ignore
+        kw["u0"] = np.array(
+            [ocp_solver.get(0, "u") for ocp_solver in self.ocp_batch_solver.ocp_solvers]
+        )
+
+        if mpc_input.u0 is not None:
+            kw["Q"] = np.array(
+                [
+                    ocp_solver.get_cost()
+                    for ocp_solver in self.ocp_batch_solver.ocp_solvers
+                ]
+            )
+        else:
+            kw["V"] = np.array(
+                [
+                    ocp_solver.get_cost()
+                    for ocp_solver in self.ocp_batch_solver.ocp_solvers
+                ]
+            )
+
+        if use_sensitivity_solver:
+            self.ocp_batch_sensitivity_solver.load_iterate_from_flat_obj(
+                self.ocp_batch_solver.store_iterate_to_flat_obj()
+            )
+
+            self.ocp_batch_sensitivity_solver.solve()
+
+            if dudx:
+                kw["du0_dx0"] = np.array(
+                    [
+                        ocp_sensitivity_solver.eval_solution_sensitivity(
+                            stages=0, with_respect_to="initial_state"
+                        )[1]
+                        for ocp_sensitivity_solver in self.ocp_batch_sensitivity_solver.ocp_solvers
+                    ]
+                )
+
+            if dudp:
+                if use_adj_sens:
+                    # TODO: Tested for scalar u only
+                    seed_vec = np.ones((self.n_batch, self.ocp.dims.nu, 1))
+
+                    # n_seed can change when only subset of u is updated
+                    n_seed = self.ocp.dims.nu
+
+                    assert seed_vec.shape == (
+                        self.n_batch,
+                        self.ocp.dims.nu,
+                        n_seed,
+                    )
+
+                    kw["du0_dp_global"] = (
+                        self.ocp_batch_sensitivity_solver.eval_adjoint_solution_sensitivity(
+                            seed_x=[],
+                            seed_u=[(0, seed_vec)],
+                            with_respect_to="p_global",
+                            sanity_checks=True,
+                        )
+                    )
+
+                else:
+                    kw["du0_dp_global"] = np.array(
+                        [
+                            ocp_sensitivity_solver.eval_solution_sensitivity(
+                                0, "p_global"
+                            )[1]
+                            for ocp_sensitivity_solver in self.ocp_batch_sensitivity_solver.ocp_solvers
+                        ]
+                    ).reshape(self.n_batch, self.ocp.dims.nu, self.p_global_dim)
+
+                assert kw["du0_dp_global"].shape == (
+                    self.n_batch,
+                    self.ocp.dims.nu,
+                    self.p_global_dim,
+                )
+
+            if dvdp:
+                kw["dvalue_dp_global"] = np.array(
+                    [
+                        ocp_sensitivity_solver.eval_and_get_optimal_value_gradient(
+                            "p_global"
+                        )
+                        for ocp_sensitivity_solver in self.ocp_batch_sensitivity_solver.ocp_solvers
+                    ]
+                )
+
+        if dudx:
+            kw["du0_dx0"] = np.array(
+                [
+                    ocp_solver.eval_solution_sensitivity(
+                        0, with_respect_to="initial_state"
+                    )[1]
+                    for ocp_solver in self.ocp_batch_solver.ocp_solvers
+                ]
+            )
+        if dvdx:
+            kw["dvalue_dx0"] = np.array(
+                [
+                    solver.eval_and_get_optimal_value_gradient(
+                        with_respect_to="initial_state"
+                    )
+                    for solver in self.ocp_batch_solver.ocp_solvers
+                ]
+            )
+        if dvdu:
+            raise NotImplementedError("Batch sensitivity not implemented for dvdu.")
+
+        states = self.ocp_batch_solver.store_iterate_to_flat_obj()
+
+        # Set solvers to default
+        default_params = MPCParameter(
+            p_global=self.default_p_global,
+            p_stagewise=np.tile(self.default_p_stagewise, (self.N + 1, 1)),  # type:ignore
+        )
+        unset_u0 = True if mpc_input.u0 is not None else False
+        set_ocp_solver_to_default(
+            ocp_solver=self.ocp_batch_solver,
+            default_mpc_parameters=default_params,
+            unset_u0=unset_u0,
+        )
+        if use_sensitivity_solver:
+            set_ocp_solver_to_default(
+                ocp_solver=self.ocp_batch_sensitivity_solver,
+                default_mpc_parameters=default_params,
+                unset_u0=unset_u0,
+            )
+
+        return MPCOutput(**kw), states  # type: ignore
 
     def fetch_param(
         self,

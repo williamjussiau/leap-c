@@ -35,6 +35,7 @@ class LinearSystemMPC(MPC):
         params: dict[str, np.ndarray] | None = None,
         learnable_params: list[str] | None = None,
         discount_factor: float = 0.99,
+        n_batch: int = 1,
     ):
         if params is None:
             params = {
@@ -51,7 +52,7 @@ class LinearSystemMPC(MPC):
         ocp = export_parametric_ocp(param=params, learnable_params=learnable_params)
         configure_ocp_solver(ocp)
 
-        super().__init__(ocp=ocp, discount_factor=discount_factor)
+        super().__init__(ocp=ocp, discount_factor=discount_factor, n_batch=n_batch)
 
 
 class LinearSystemOcpEnv(OCPEnv):

@@ -532,7 +532,7 @@ def run_individual_solve(
     # TODO: This assumes nu = 1 for the policy. Modify to cover the case where nu > 1
     for key, compute_func in computations.items():
         solve_value, solve_gradient = compute_func()
-        results["_solve"][key]["value"][k, i_param] = solve_value
+        results["_solve"][key]["value"][k, i_param] = solve_value[0]
         results["_solve"][key]["gradient"][k, i_param] = (
             solve_gradient[i_param]
             if key != "policy"

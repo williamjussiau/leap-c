@@ -2,54 +2,10 @@ import numpy as np
 import pytest
 
 from seal.examples.linear_system import LinearSystemMPC
-from seal.mpc import MPC
-from seal.util import find_idx_for_labels
 
 
-def set_up_test_parameters(
-    mpc: MPC,
-    np_test: int = 10,
-    scale_low: float = 0.9,
-    scale_high: float = 1.1,
-    varying_param_label="A_0",
-) -> np.ndarray:
-    p_global_values = mpc.ocp_solver.acados_ocp.p_global_values
-
-    test_param = np.repeat(p_global_values, np_test).reshape(len(p_global_values), -1)
-
-    # Vary parameter along one dimension of p_label
-    p_idx = find_idx_for_labels(
-        mpc.ocp_solver.acados_ocp.model.p_global, varying_param_label
-    )[0]
-    test_param[p_idx, :] = np.linspace(
-        scale_low * p_global_values[p_idx],
-        scale_high * p_global_values[p_idx],
-        np_test,
-    ).flatten()
-
-    return test_param
-
-
-@pytest.fixture(scope="session")
-def linear_mpc():
-    return LinearSystemMPC()
-
-
-@pytest.fixture(scope="session")
-def n_batch() -> int:
-    return 4
-
-
-@pytest.fixture(scope="session")
-def learnable_linear_mpc(n_batch: int) -> LinearSystemMPC:
-    return LinearSystemMPC(
-        learnable_params=["A", "B", "Q", "R", "b", "f", "V_0"], n_batch=n_batch
-    )
-
-
-@pytest.fixture(scope="session")
-def linear_mpc_test_params(
-    learnable_linear_mpc: MPC, n_batch: int, delta: float = 0.05
+def generate_batch_variation(
+    nominal: np.ndarray, n_batch: int, delta: float = 0.05
 ) -> np.ndarray:
     """Set up test parameters for the linear system MPC.
 
@@ -64,19 +20,68 @@ def linear_mpc_test_params(
     global parameters. The last axis determines the parameter that is varied.
     """
 
-    nominal = learnable_linear_mpc.ocp_solver.acados_ocp.p_global_values
-
-    width = np.array([delta * p if np.abs(p) > 1e-6 else delta for p in nominal])
+    width = np.array([delta * val if np.abs(val) > 1e-6 else delta for val in nominal])
 
     # repeat mean into an array with shape (n_batch, n_param)
-    params = np.tile(nominal, (n_batch, 1))
+    batch_val = np.tile(nominal, (n_batch, 1))
 
     # repeat mean along a third axis
-    params = np.repeat(params[:, :, np.newaxis], nominal.shape[0], axis=2)
+    batch_val = np.repeat(batch_val[:, :, np.newaxis], nominal.shape[0], axis=2)
 
     for i, idx in enumerate(np.arange(len(nominal))):
-        params[:, idx, i] = np.linspace(
+        batch_val[:, idx, i] = np.linspace(
             nominal[idx] - width[idx], nominal[idx] + width[idx], n_batch
         )
 
-    return params
+    return batch_val
+
+
+def generate_batch_constant(val: np.ndarray, shape) -> np.ndarray:
+    """Create a batched array by repeating a constant value.
+
+    This function generates a batch of arrays by repeating a constant value array
+    across specified dimensions.
+
+    Args:
+        val (np.ndarray): The constant value array to be repeated.
+        shape (tuple): Target shape for the output batch. Should be a 3D shape
+            (batch_size, feature_dim, sequence_length).
+
+    Returns:
+        np.ndarray: A 3D array of shape `shape` where the input `val` is repeated
+            across batch and sequence dimensions.
+    """
+    batch_val = np.repeat(
+        np.tile(val, (shape[0], 1))[:, :, np.newaxis],
+        shape[2],
+        axis=2,
+    )
+
+    return batch_val
+
+
+@pytest.fixture(scope="session")
+def linear_mpc():
+    """Fixture for the linear system MPC."""
+    return LinearSystemMPC()
+
+
+@pytest.fixture(scope="session")
+def n_batch() -> int:
+    return 4
+
+
+@pytest.fixture(scope="session")
+def learnable_linear_mpc(n_batch: int) -> LinearSystemMPC:
+    """Fixture for the linear system MPC with learnable parameters."""
+    return LinearSystemMPC(
+        learnable_params=["A", "B", "Q", "R", "b", "f", "V_0"], n_batch=n_batch
+    )
+
+
+@pytest.fixture(scope="session")
+def p_global(learnable_linear_mpc: LinearSystemMPC, n_batch: int) -> np.ndarray:
+    """Fixture for the global parameters of the linear system MPC."""
+    return generate_batch_variation(
+        learnable_linear_mpc.ocp_solver.acados_ocp.p_global_values, n_batch
+    )

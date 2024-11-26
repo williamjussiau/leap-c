@@ -142,24 +142,24 @@ def test_CleanseAndReduce():
 
     x = torch.tensor([[1.0], [2.0], [3.0], [4.0]], dtype=torch.float64)
     status = torch.tensor([[0], [1], [0], [0]], dtype=torch.int8)
-    loss = cleansed_loss(x, status)
+    loss, _ = cleansed_loss(x, status)
     assert loss.item() == 8 / 3
 
     status = torch.tensor([[0], [0], [0], [0]], dtype=torch.int8)
-    loss = cleansed_loss(x, status)
+    loss, _ = cleansed_loss(x, status)
     assert loss.item() == 10 / 4
 
     status = torch.tensor([[2], [0], [1], [0]], dtype=torch.int8)
-    loss = cleansed_loss(x, status)
+    loss, _ = cleansed_loss(x, status)
     assert loss.item() == 6 / 2
 
     status = torch.tensor([[2], [2], [1], [0]], dtype=torch.int8)
-    loss = cleansed_loss(x, status)
+    loss, _ = cleansed_loss(x, status)
     assert loss.item() == 0.0
 
     status = torch.tensor([[1], [0], [1]], dtype=torch.int8)
     try:
-        loss = cleansed_loss(x, status)
+        loss, _ = cleansed_loss(x, status)
         assert False
     except ValueError:
         assert True
@@ -179,7 +179,7 @@ def test_CleanseAndReduceMultipleBatchAndSampleDims():
     status = torch.zeros((3, 3, 1), dtype=torch.int8)
     status[0, 0] = 1
     status[0, 1] = 2
-    loss = cleansed_loss(x, status)
+    loss, _ = cleansed_loss(x, status)
     assert loss.item() == 1.0
 
     x = torch.ones((3, 3, 3, 3))
@@ -188,7 +188,7 @@ def test_CleanseAndReduceMultipleBatchAndSampleDims():
     status[0, 1] = 2
     status[0, 2] = 4
     status[1, 2] = 5
-    loss = cleansed_loss(x, status)
+    loss, _ = cleansed_loss(x, status)
     assert loss.item() == 1.0
 
     status = torch.zeros((3, 3, 1), dtype=torch.int8)
@@ -197,19 +197,19 @@ def test_CleanseAndReduceMultipleBatchAndSampleDims():
     status[0, 2] = 1
     status[1, 2] = 2
     status[2, 2] = 2
-    loss = cleansed_loss(x, status)
+    loss, _ = cleansed_loss(x, status)
     assert loss.item() == 0.0
 
     status = torch.zeros((3, 3, 3, 1), dtype=torch.int8)
     try:
-        loss = cleansed_loss(x, status)
+        loss, _ = cleansed_loss(x, status)
         assert False
     except ValueError:
         assert True
 
     status = torch.zeros((3, 1), dtype=torch.int8)
     try:
-        loss = cleansed_loss(x, status)
+        loss, _ = cleansed_loss(x, status)
         assert False
     except ValueError:
         assert True
@@ -227,7 +227,7 @@ def test_CleanseAndReduceMultipleBatchAndSampleDims():
         throw_exception_if_exceeded=True,
     )
     try:
-        loss = cleansed_loss(x, status)
+        loss, _ = cleansed_loss(x, status)
         assert False
     except ValueError:
         assert True

@@ -103,6 +103,12 @@ class AcadosFileManager:
             shutil.rmtree(self.export_directory, ignore_errors=True)
 
 
-class FakeListAlwaysReturnsNone:
-    def __getitem__(self, idx) -> None:
-        return None
+def add_prefix_extend(prefix: str, extended: dict, extending: dict) -> None:
+    """
+    Add a prefix to the keys of a dictionary and extend the with other dictionary with the result.
+    Raises a ValueError if a key that has been extended with a prefix is already in the extended dict.
+    """
+    for k, v in extending.items():
+        if extending.get(prefix + k) is not None:
+            raise ValueError(f"Key {prefix + k} already exists in the dictionary.")
+        extended[prefix + k] = v

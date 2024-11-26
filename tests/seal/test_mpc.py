@@ -411,11 +411,10 @@ def test_statelessness(
     p_global = p_global + np.ones(p_global.shape[0]) * 0.01
     p_stagewise = lin_mpc.default_p_stagewise
     assert p_stagewise is not None
-    p_stagewise = p_stagewise + np.ones(p_stagewise.shape[0]) * 0.01
+    p_stagewise = p_stagewise + np.ones(p_stagewise.shape[1]) * 0.01
     assert (
-        len(p_stagewise.shape) == 1
-    ), f"I assumed this would be flat, but shape is {p_stagewise.shape}"
-    p_stagewise = np.tile(p_stagewise, (lin_mpc.N + 1, 1))
+        len(p_stagewise.shape) == 2
+    ), f"I assumed this would be of shape ({lin_mpc.N+1}, #p_stagewise) but shape is {p_stagewise.shape}"
     params = MPCParameter(p_global, p_stagewise)
     x0_different = x0 - 0.01
     u0_different = u0 - 0.01

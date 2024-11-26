@@ -143,19 +143,25 @@ class MPCSolutionFunction(autograd.Function):
             if p_stagewise is None:
                 p_whole = None
             else:
-                p_whole = p_stagewise
+                p_whole = MPCParameter(
+                    None,
+                    p_stagewise.p_stagewise.astype(np.float64),  # type:ignore
+                    p_stagewise_sparse_idx=p_stagewise.p_stagewise_sparse_idx,
+                )
         else:
             p_global_np = tensor_to_numpy(p_global)
             if p_stagewise is None:
-                p_whole = MPCParameter(p_global_np, None, None)
+                p_whole = MPCParameter(p_global_np.astype(np.float64), None, None)
             else:
                 if p_stagewise.p_global is not None:
                     raise ValueError(
                         "p_global is already set in p_rests, but would be overwritten!"
                     )
                 p_whole = MPCParameter(
-                    p_global=p_global_np,
-                    p_stagewise=p_stagewise.p_stagewise,
+                    p_global=p_global_np.astype(np.float64),
+                    p_stagewise=p_stagewise.p_stagewise.astype(np.float64)  # type:ignore
+                    if p_stagewise.p_stagewise is not None
+                    else None,
                     p_stagewise_sparse_idx=p_stagewise.p_stagewise_sparse_idx,
                 )
         x0_np = tensor_to_numpy(x0)

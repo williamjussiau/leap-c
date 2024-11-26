@@ -2,14 +2,14 @@ from abc import ABC
 from copy import deepcopy
 from functools import cached_property
 from pathlib import Path
-from typing import Callable, List, NamedTuple
+from typing import Any, Callable, List, NamedTuple
 
 import casadi as ca
 import numpy as np
 from acados_template import AcadosOcp, AcadosOcpBatchSolver, AcadosOcpSolver
 from acados_template.acados_ocp_iterate import (
-    AcadosOcpFlattenedIterate,
     AcadosOcpFlattenedBatchIterate,
+    AcadosOcpFlattenedIterate,
     AcadosOcpIterate,
 )
 
@@ -324,7 +324,7 @@ class MPC(ABC):
         # setup OCP for sensitivity solver
         self.ocp_sensitivity = deepcopy(ocp)
         self.ocp_sensitivity.translate_cost_to_external_cost()
-        self.ocp_sensitivity.solver_options.nlp_solver_type = "SQP"
+        self.ocp_sensitivity.solver_options.nlp_solver_type = "SQP_RTI"
         self.ocp_sensitivity.solver_options.globalization_fixed_step_length = 0.0
         self.ocp_sensitivity.solver_options.nlp_solver_max_iter = 1
         self.ocp_sensitivity.solver_options.qp_solver_iter_max = 200
@@ -360,9 +360,7 @@ class MPC(ABC):
         if self._discount_factor is not None:
             set_discount_factor(solver, self._discount_factor)
 
-        default_params = MPCParameter(
-            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
-        )
+        default_params = MPCParameter(self.default_p_global, self.default_p_stagewise)
         set_ocp_solver_to_default(solver, default_params, unset_u0=True)
 
         return solver
@@ -374,9 +372,7 @@ class MPC(ABC):
         if self._discount_factor is not None:
             set_discount_factor(solver, self._discount_factor)
 
-        default_params = MPCParameter(
-            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
-        )
+        default_params = MPCParameter(self.default_p_global, self.default_p_stagewise)
         set_ocp_solver_to_default(solver, default_params, unset_u0=True)
 
         return solver
@@ -385,9 +381,7 @@ class MPC(ABC):
     def ocp_batch_solver(self) -> AcadosOcpBatchSolver:
         batch_solver = AcadosOcpBatchSolver(self.ocp, self.n_batch)
 
-        default_params = MPCParameter(
-            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
-        )
+        default_params = MPCParameter(self.default_p_global, self.default_p_stagewise)
         if self._discount_factor is not None:
             set_discount_factor(batch_solver, self._discount_factor)
         set_ocp_solver_to_default(batch_solver, default_params, unset_u0=True)
@@ -398,9 +392,7 @@ class MPC(ABC):
     def ocp_batch_sensitivity_solver(self) -> AcadosOcpBatchSolver:
         batch_solver = AcadosOcpBatchSolver(self.ocp_sensitivity, self.n_batch)
 
-        default_params = MPCParameter(
-            self.default_p_global, np.tile(self.default_p_stagewise, (self.N + 1, 1))
-        )
+        default_params = MPCParameter(self.default_p_global, self.default_p_stagewise)
         if self._discount_factor is not None:
             set_discount_factor(batch_solver, self._discount_factor)
         set_ocp_solver_to_default(batch_solver, default_params, unset_u0=True)
@@ -418,15 +410,33 @@ class MPC(ABC):
     def N(self) -> int:
         return self.ocp.solver_options.N_horizon  # type: ignore
 
-    @property
+    @cached_property
     def default_p_global(self) -> np.ndarray | None:
         """Return the default p_global."""
-        return self.ocp.p_global_values if self.ocp.model.p_global is not None else None
+        return (
+            self.ocp.p_global_values
+            if self.is_model_p_legal(self.ocp.model.p_global)
+            else None
+        )
 
-    @property
+    @cached_property
     def default_p_stagewise(self) -> np.ndarray | None:
         """Return the default p_stagewise."""
-        return self.ocp.parameter_values if self.ocp.model.p is not None else None
+        return (
+            np.tile(self.ocp.parameter_values, (self.N + 1, 1))
+            if self.is_model_p_legal(self.ocp.model.p)
+            else None
+        )
+
+    def is_model_p_legal(self, model_p: Any) -> bool:
+        if model_p is None:
+            return False
+        elif isinstance(model_p, ca.SX):
+            return 0 not in model_p.shape
+        elif isinstance(model_p, list) or isinstance(model_p, tuple):
+            return len(model_p) != 0
+        else:
+            raise ValueError(f"Unknown case for model_p, type is {type(model_p)}")
 
     def state_value(
         self, state: np.ndarray, p_global: np.ndarray | None, sens: bool = False
@@ -673,7 +683,7 @@ class MPC(ABC):
         # Set solvers to default
         default_params = MPCParameter(
             p_global=self.default_p_global,
-            p_stagewise=np.tile(self.default_p_stagewise, (self.N + 1, 1)),  # type:ignore
+            p_stagewise=self.default_p_stagewise,  # type:ignore
         )
         unset_u0 = True if mpc_input.u0 is not None else False
         set_ocp_solver_to_default(
@@ -825,7 +835,7 @@ class MPC(ABC):
         # Set solvers to default
         default_params = MPCParameter(
             p_global=self.default_p_global,
-            p_stagewise=np.tile(self.default_p_stagewise, (self.N + 1, 1)),  # type:ignore
+            p_stagewise=self.default_p_stagewise,  # type:ignore
         )
         unset_u0 = True if mpc_input.u0 is not None else False
         set_ocp_solver_to_default(
@@ -841,6 +851,26 @@ class MPC(ABC):
             )
 
         return MPCOutput(**kw), flat_iterate  # type: ignore
+
+    def last_solve_diagnostics(
+        self, ocp_solver: AcadosOcpSolver | AcadosOcpBatchSolver
+    ) -> dict | list[dict]:
+        """Print statistics for the last solve and collect QP-diagnostics for the solvers."""
+
+        if isinstance(ocp_solver, AcadosOcpSolver):
+            diagnostics = ocp_solver.qp_diagnostics()
+            ocp_solver.print_statistics()
+            return diagnostics
+        elif isinstance(ocp_solver, AcadosOcpBatchSolver):
+            diagnostics = []
+            for i, single_solver in enumerate(ocp_solver.ocp_solvers):
+                diagnostics.append(single_solver.qp_diagnostics())
+                single_solver.print_statistics()
+            return diagnostics
+        else:
+            raise ValueError(
+                f"Unknown solver type, expected AcadosOcpSolver or AcadosOcpBatchSolver, but got {type(ocp_solver)}."
+            )
 
     def fetch_param(
         self,
@@ -920,11 +950,11 @@ class MPC(ABC):
             if self._h_fn is None:
                 inputs = [self.ocp.model.x, self.ocp.model.u]
 
-                if self.ocp.model.p is not None:
-                    inputs.append(self.ocp.model.p)  # type: ignore
-
                 if self.ocp.model.p_global is not None:
                     inputs.append(self.ocp.model.p_global)
+
+                if self.ocp.model.p is not None:
+                    inputs.append(self.ocp.model.p)  # type: ignore
 
                 self._h_fn = ca.Function("h", inputs, [self.ocp.model.con_h_expr])
 
@@ -968,11 +998,11 @@ class MPC(ABC):
         if self._cost_fn is None:
             inputs = [self.ocp.model.x, self.ocp.model.u]
 
-            if self.ocp.model.p is not None:
-                inputs.append(self.ocp.model.p)
-
             if self.ocp.model.p_global is not None:
                 inputs.append(self.ocp.model.p_global)
+
+            if self.ocp.model.p is not None:
+                inputs.append(self.ocp.model.p)
 
             self._cost_fn = ca.Function(
                 "cost", inputs, [self.ocp.model.cost_expr_ext_cost]
@@ -989,3 +1019,59 @@ class MPC(ABC):
             inputs.append(p_stage)
 
         return self._cost_fn(*inputs).full().item()  # type: ignore
+
+
+def sequential_batch_solve(
+    mpc: MPC,
+    mpc_input: MPCInput,
+    mpc_state_given: list[MPCState] | None = None,
+    dudx: bool = False,
+    dudp: bool = False,
+    dvdx: bool = False,
+    dvdu: bool = False,
+    dvdp: bool = False,
+    use_adj_sens: bool = True,
+) -> tuple[MPCOutput, list[MPCState]]:
+    """Perform one solve after another for every sample of the batch (contrary to the parallelized batch_solve of the mpc class).
+    Useful for debugging and timing.
+    """
+
+    def get_idx(data, index):
+        if isinstance(data, tuple) and hasattr(data, "_fields"):  # namedtuple
+            elem_type = type(data)
+            return elem_type(*(get_idx(elem, index) for elem in data))  # type: ignore
+
+        return None if data is None else data[index]
+
+    batch_size = mpc_input.x0.shape[0]
+    outputs = []
+    states = []
+
+    for idx in range(batch_size):
+        mpc_output, mpc_state = mpc._solve(
+            mpc_input=mpc_input.get_sample(idx),
+            mpc_state=mpc_state_given[idx] if mpc_state_given is not None else None,
+            dudx=dudx,
+            dudp=dudp,
+            dvdp=dvdp,
+            dvdx=dvdx,
+            dvdu=dvdu,
+            use_adj_sens=use_adj_sens,
+        )
+
+        outputs.append(mpc_output)
+        states.append(mpc_state)
+
+    def collate(key):
+        value = getattr(outputs[0], key)
+        if value is None:
+            return value
+        return np.stack([getattr(output, key) for output in outputs])
+
+    fields = {key: collate(key) for key in MPCOutput._fields}
+    fields["status"] = fields["status"].squeeze()
+    fields["V"] = fields["V"].squeeze() if fields["V"] is not None else None
+    fields["Q"] = fields["Q"].squeeze() if fields["Q"] is not None else None
+    mpc_output = MPCOutput(**fields)  # type: ignore
+
+    return mpc_output, states  # type: ignore

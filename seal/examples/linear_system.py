@@ -99,7 +99,7 @@ class LinearSystemOcpEnv(OCPEnv):
         return super().reset(seed=seed, options=options)
 
     def init_state(self):
-        return [0.5, 0]  # Start in the middle of the bounds?
+        return self.mpc.ocp.constraints.x0.astype(dtype=np.float32)
 
 
 def find_param_in_p_or_p_global(param_name: list[str], model: AcadosModel) -> list:
@@ -260,11 +260,18 @@ def export_parametric_ocp(
     ocp.constraints.ubx = np.array([+1.0, +1.0])
     ocp.constraints.x0 = np.array([0.5, 0.0])  # Default constraints.x0?
 
-    ocp.constraints.idxsbx = np.array([0])
-    ocp.cost.zl = np.array([1e2])
-    ocp.cost.zu = np.array([1e2])
-    ocp.cost.Zl = np.diag([0])
-    ocp.cost.Zu = np.diag([0])
+    # Only slack first dimension
+    # ocp.constraints.idxsbx = np.array([0])
+    # ocp.cost.zl = np.array([1e2])
+    # ocp.cost.zu = np.array([1e2])
+    # ocp.cost.Zl = np.diag([0])
+    # ocp.cost.Zu = np.diag([0])
+    # Slack both dimensions
+    ocp.constraints.idxsbx = np.array([0, 1])
+    ocp.cost.zl = np.ones((2,)) * 1e2
+    ocp.cost.zu = np.ones((2,)) * 1e2
+    ocp.cost.Zl = np.diag([0, 0])
+    ocp.cost.Zu = np.diag([0, 0])
 
     ocp.constraints.idxbu = np.array([0])
     ocp.constraints.lbu = np.array([-1.0])

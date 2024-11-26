@@ -123,7 +123,12 @@ class OCPEnv(gym.Env):
             The current parameters of the system.
         """
         return MPCParameter(
-            p_global=self.mpc.default_p_global, p_stagewise=self.mpc.default_p_stagewise
+            p_global=self.mpc.default_p_global.astype(np.float32)
+            if self.mpc.default_p_global is not None
+            else None,
+            p_stagewise=self.mpc.default_p_stagewise.astype(np.float32)
+            if self.mpc.default_p_stagewise is not None
+            else None,
         )
 
     def combine_params(self, learned_params, env_obs) -> MPCParameter:
@@ -207,7 +212,7 @@ class OCPEnv(gym.Env):
             raise ValueError("State is not set. Call reset first.")
 
         self.t += self._dt
-        self.x = self.state_dynamics(x, action, env_params)  # type: ignore
+        self.x = self.state_dynamics(x, action, env_params).astype(dtype=np.float32)  # type: ignore
         self.env_params = self.current_env_params()
         x_next, env_params_next = self.current_observation()
 

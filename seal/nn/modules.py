@@ -1,4 +1,5 @@
 import math
+from typing import Any
 
 import casadi as ca
 import torch
@@ -148,11 +149,18 @@ class CleanseAndReducePerSampleLoss(nn.Module):
 
     def forward(
         self, per_sample_loss: torch.Tensor, status: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, dict[str, Any]]:
         """
         Parameters:
             per_sample_loss: The per_sample_loss.
             status: The status of the MPC solution, of same shape as the per_sample loss for the first how_many_batch_dimensions and afterwards one integer dimension, containing whether the solution converged (0 means converged, all other integers count as not converged).
+
+        Returns:
+            The cleansed loss and a dictionary containing
+
+                nonconvergent_samples: The number of nonconvergent samples
+
+                invalid_loss: Whether the number of nonconvergences exceeded the allowed number.
         """
         if (
             per_sample_loss.shape[: self.num_batch_dimensions]
@@ -170,15 +178,19 @@ class CleanseAndReducePerSampleLoss(nn.Module):
                 "The last dimension of status must be of size 1, containing the status of each sample."
             )
 
+        stats = dict()
         error_mask = status.to(dtype=torch.bool)
-        nonconvergent_samples = torch.sum(error_mask)
+        nonconvergent_samples = torch.sum(error_mask).item()
+        stats["nonconvergent_samples"] = nonconvergent_samples
 
         if nonconvergent_samples > self.n_nonconvergences_allowed:
             if self.throw_exception_if_exceeded:
                 raise ValueError(
                     f"Number of nonconvergences exceeded the allowed number of {self.n_nonconvergences_allowed}."
                 )
-            return torch.zeros(1)
+            stats["invalid_loss"] = False
+            return torch.zeros(1), stats
+        stats["invalid_loss"] = True
 
         cleansed_loss = per_sample_loss.clone()
         cleansed_loss[error_mask.squeeze()] = 0
@@ -193,4 +205,4 @@ class CleanseAndReducePerSampleLoss(nn.Module):
             result = cleansed_loss
         else:
             raise ValueError("Reduction must be either 'mean', 'sum' or 'none'.")
-        return result
+        return result, stats

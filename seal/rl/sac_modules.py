@@ -21,7 +21,7 @@ class SACQNet(nn.Module):
         state_embed: nn.Module,
         action_embed: nn.Module,
         embed_to_q: nn.Module,
-        tau: float,
+        soft_update_factor: float,
     ):
         """
         Parameters:
@@ -29,14 +29,14 @@ class SACQNet(nn.Module):
             action_embed: Module that is used to embed the action.
             embed_to_q: Gets the concatenation of the two embeddings (in the last dimension!) as input and outputs a q value (also see forward).
                 May also output a stats dictionary that will be logged.
-            tau: The soft update factor.
+            soft_update_factor: The soft update factor.
         """
         super().__init__()
         self.state_embed = state_embed
         self.action_embed = action_embed
         self.embed_to_q = embed_to_q
 
-        self.tau = tau
+        self.soft_update_factor = soft_update_factor
 
     def forward(
         self, state: torch.Tensor, action: torch.Tensor
@@ -85,7 +85,8 @@ class SACQNet(nn.Module):
         """Update the target network parameters with the current network parameters using a soft update."""
         for param_target, param in zip(net_target.parameters(), self.parameters()):
             param_target.data.copy_(
-                param_target.data * (1.0 - self.tau) + param.data * self.tau
+                param_target.data * (1.0 - self.soft_update_factor)
+                + param.data * self.soft_update_factor
             )
 
 
@@ -249,7 +250,9 @@ class SACConfig(BaseTrainerConfig):
 
     # Actor
     init_entropy_scaling: float
-    target_entropy: float
+    target_entropy: (
+        float | None
+    )  # NOTE None is allowed here because this is often inferred as -a_dim.
     minimal_std: (
         float  # Will be used in the TanhNormal to avoid collapse of the distribution
     )
@@ -257,7 +260,7 @@ class SACConfig(BaseTrainerConfig):
     param_shift: np.ndarray
 
     # Critic
-    tau: float  # for target network soft update
+    soft_update_factor: float
     soft_update_frequency: int
 
 
@@ -416,13 +419,19 @@ class SACTrainer(Trainer):
         )
 
     def load(self, save_directory: str):
-        """Load the models from the given directory. Is ment to be exactly compatible with save."""
-        self.actor.load_state_dict(torch.load(f"{save_directory}/actor.pth"))
-        self.critic1.load_state_dict(torch.load(f"{save_directory}/critic1.pth"))
-        self.critic2.load_state_dict(torch.load(f"{save_directory}/critic2.pth"))
+        """Load the models from the given directory. Is meant to be exactly compatible with save."""
+        self.actor.load_state_dict(
+            torch.load(f"{save_directory}/actor.pth", weights_only=True)
+        )
+        self.critic1.load_state_dict(
+            torch.load(f"{save_directory}/critic1.pth", weights_only=True)
+        )
+        self.critic2.load_state_dict(
+            torch.load(f"{save_directory}/critic2.pth", weights_only=True)
+        )
         self.critic1_target.load_state_dict(
-            torch.load(f"{save_directory}/critic1_target.pth")
+            torch.load(f"{save_directory}/critic1_target.pth", weights_only=True)
         )
         self.critic2_target.load_state_dict(
-            torch.load(f"{save_directory}/critic2_target.pth")
+            torch.load(f"{save_directory}/critic2_target.pth", weights_only=True)
         )

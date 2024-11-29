@@ -32,13 +32,15 @@ class LinearSystemMPC(MPC):
             lbu = -1
             ubu = 1
         Slack:
-            Only the first entry of x; linear slack zl, zu = 1e2
+            Both entries of x are slacked linearly, i.e., the punishment in the cost is slack_weights^T*violation.
+            The slack weights are [1e2, 1e2].
     """
 
     def __init__(
         self,
         params: dict[str, np.ndarray] | None = None,
         learnable_params: list[str] | None = None,
+        N_horizon: int = 20,
         discount_factor: float = 0.99,
         n_batch: int = 1,
     ):
@@ -55,7 +57,7 @@ class LinearSystemMPC(MPC):
 
         learnable_params = learnable_params if learnable_params is not None else []
         ocp = export_parametric_ocp(
-            nominal_param=params, learnable_param=learnable_params
+            param=params, learnable_params=learnable_params, N_horizon=N_horizon
         )
         configure_ocp_solver(ocp)
 
@@ -177,10 +179,11 @@ def configure_ocp_solver(
 
 
 def export_parametric_ocp(
-    nominal_param: dict[str, np.ndarray],
+    param: dict[str, np.ndarray],
     cost_type="EXTERNAL",
     name: str = "lti",
-    learnable_param: list[str] | None = None,
+    learnable_params: list[str] | None = None,
+    N_horizon=20,
 ) -> AcadosOcp:
     """
     Export a parametric optimal control problem (OCP) for a discrete-time linear time-invariant (LTI) system.
@@ -194,13 +197,15 @@ def export_parametric_ocp(
             Name of the model.
         learnable_params:
             List of parameters that should be learnable.
+        N_horizon:
+            The length of the prediction horizon.
 
     Returns:
         AcadosOcp
             An instance of the AcadosOcp class representing the optimal control problem.
     """
-    if learnable_param is None:
-        learnable_param = []
+    if learnable_params is None:
+        learnable_params = []
     ocp = AcadosOcp()
 
     ocp.model.name = name
@@ -211,11 +216,11 @@ def export_parametric_ocp(
     ocp.model.x = cs.SX.sym("x", ocp.dims.nx)  # type:ignore
     ocp.model.u = cs.SX.sym("u", ocp.dims.nu)  # type:ignore
 
-    ocp.solver_options.N_horizon = 40
+    ocp.solver_options.N_horizon = N_horizon
 
     ocp = translate_learnable_param_to_p_global(
-        nominal_param=nominal_param,
-        learnable_param=learnable_param,
+        nominal_param=param,
+        learnable_param=learnable_params,
         ocp=ocp,
     )
 
@@ -228,7 +233,7 @@ def export_parametric_ocp(
     ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(ocp.model)
 
     ocp.cost.cost_type_e = "EXTERNAL"
-    ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(ocp.model, nominal_param)
+    ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(ocp.model, param)
 
     ocp.constraints.idxbx_0 = np.array([0, 1])
     ocp.constraints.lbx_0 = np.array([-1.0, -1.0])

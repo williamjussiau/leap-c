@@ -228,11 +228,16 @@ class LinearSystemSACConfig(SACConfig):
     # env
     max_time: float
     dt: float
-    a_dim: int
-    s_dim: int
-    param_dim: int
+    a_dim: int | None  # NOTE: Will be inferred from env and is None until then
+    s_dim: int | None  # NOTE: Will be inferred from env and is None until then
+    p_learnable_dim: (
+        int | None
+    )  # NOTE: Will be inferred from env and is None until then
+    default_params: dict[str, np.ndarray]
+    learnable_params: list[str]
     # MPC-specific
     accept_n_nonconvergences_per_batch: int
+    N_horizon: int
 
     # Networks, i.e., mlps
     hidden_dims: list[int]
@@ -244,6 +249,8 @@ class LinearSystemSACConfig(SACConfig):
 
 
 def create_qnet(config: LinearSystemSACConfig) -> SACQNet:
+    if config.s_dim is None or config.a_dim is None:
+        raise ValueError("s_dim and a_dim must be set before creating the qnet.")
     s_embed = StateEmbed(config.s_dim, config.q_embed_size, config.activation)
     a_embed = LinearWithActivation(config.a_dim, config.q_embed_size, config.activation)
     embed_to_q = create_mlp(
@@ -254,7 +261,89 @@ def create_qnet(config: LinearSystemSACConfig) -> SACQNet:
         use_activation_on_output=False,
     )
     return SACQNet(
-        state_embed=s_embed, action_embed=a_embed, embed_to_q=embed_to_q, tau=config.tau
+        state_embed=s_embed,
+        action_embed=a_embed,
+        embed_to_q=embed_to_q,
+        soft_update_factor=config.soft_update_factor,
+    )
+
+
+def create_actor(
+    config: LinearSystemSACConfig, scenario: Scenario, mpc: MPC
+) -> SACActor:
+    if config.s_dim is None or config.a_dim is None or config.target_entropy is None:
+        raise ValueError(
+            "s_dim, a_dim and target_entropy must be set before creating the actor."
+        )
+    """NOTE: Mpc only needed for FO scenarios."""
+    if scenario.value == Scenario.STANDARD_SAC.value:
+        mlp = MeanStdMLP(
+            s_dim=config.s_dim,
+            mean_dim=config.a_dim,
+            std_dim=config.a_dim,
+            hidden_dims=config.hidden_dims,
+            activation=config.activation,
+        )
+        actor_net = TanhNormalNetwork(
+            mean_std_module=mlp, minimal_std=config.minimal_std
+        )
+        return SACActor(
+            obs_to_action_module=actor_net,
+            module_contains_mpc=False,
+            init_entropy_scaling=config.init_entropy_scaling,
+            target_entropy=config.target_entropy,
+        )
+
+    elif scenario.value == Scenario.FO_U_SAC.value:
+        if config.p_learnable_dim is None:
+            raise ValueError(
+                "param_dim must be set before creating the first order actor."
+            )
+        mlp = MeanStdMLP(
+            s_dim=config.s_dim,
+            mean_dim=config.p_learnable_dim,
+            std_dim=config.a_dim,
+            hidden_dims=config.hidden_dims,
+            activation=config.activation,
+        )
+        actor_net = FOUMPCNetwork(
+            mpc=mpc,
+            param_mean_action_std_model=mlp,
+            param_factor=config.param_factor,
+            param_shift=config.param_shift,
+            minimal_std=config.minimal_std,
+        )
+        return SACActor(
+            obs_to_action_module=actor_net,
+            module_contains_mpc=True,
+            init_entropy_scaling=config.init_entropy_scaling,
+            target_entropy=config.target_entropy,
+            accept_n_nonconvergences_per_batch=config.accept_n_nonconvergences_per_batch,
+            num_batch_dimensions=1,
+        )
+    else:
+        raise ValueError(
+            f"Unknown scenario, cannot create actor. Given scenario is {scenario.name}"
+        )
+
+
+def create_replay_buffer(config: LinearSystemSACConfig) -> ReplayBuffer:
+    return ReplayBuffer(
+        buffer_limit=config.replay_buffer_size,
+        device=config.device,
+        obs_dtype=config.dtype_buffer,
+    )
+
+
+def create_mpc(
+    config: LinearSystemSACConfig,
+) -> LinearSystemMPC:
+    return LinearSystemMPC(
+        params=config.default_params,
+        learnable_params=config.learnable_params,
+        discount_factor=config.discount_factor,
+        n_batch=config.batch_size,
+        N_horizon=config.N_horizon,
     )
 
 
@@ -270,59 +359,23 @@ class LinearSystemSACTrainer(SACTrainer):
             self.actor((state_tensor, params), deterministic=deterministic)[0]
         )
 
+    def goal_reached(self, max_val_score: float) -> bool:
+        if max_val_score > -4:
+            return True
+        return False
 
-def run_linear_system_sac(
-    scenario: Scenario, device: str, seed: int, savefile_path: str
-):
-    """Run the linear system SAC.
-    Parameters:
-        scenario: The scenario to run.
-        device: The device to run on.
-        seed: The seed for reproducibility.
-        savefile_path: The path where the models (networks) will be saved.
+
+def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> dict:
+    """Contains standard values for the config, except for
+    target_entropy: Will be inferred later as -a_dim, if not set before.
+    a_dim: Will be inferred from env.
+    s_dim: Will be inferred from env.
+    param_dim: Will be inferred from env.
     """
-    params = {
-        "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
-        "B": np.array([[0.03125], [0.25]]),
-        "Q": np.identity(2),
-        "R": np.identity(1),
-        "b": np.array([[0.0], [0.0]]),
-        "f": np.array([[0.0], [0.0], [0.0]]),
-        "V_0": np.array([1e-3]),
-    }
-    learnable_params = ["b"]
-    dt = 0.1
-    max_time = 10.0  # => 100 steps
-    discount_factor = 0.99
-    batch_size = 64
-    mpc = LinearSystemMPC(
-        params=params,
-        learnable_params=learnable_params,
-        discount_factor=discount_factor,
-        n_batch=batch_size,
-    )
-    env = LinearSystemOcpEnv(mpc, dt=dt, max_time=max_time)
-    param_dim = env.p_learnable_space.shape[0]  # type:ignore
-
-    a_space = env.action_space
-    a_dim = a_space.shape[0]  # type:ignore
-    s_space = env.state_space
-    s_dim = s_space.shape[0]  # type:ignore
-    target_entropy = -a_dim
-
-    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    savefile_directory_path = os.path.join(
-        savefile_path, scenario.name + "_" + timestamp
-    )
-    create_dir_if_not_exists(savefile_directory_path)
-
-    param_factor = np.array([1.0, 1.0], dtype=np.float32)
-    param_shift = np.array([0.0, 0.0], dtype=np.float32)
-    config = LinearSystemSACConfig(
-        # General and training loop
+    return dict(
         name=scenario.name,
-        seed=seed,
-        device=device,
+        seed=1337,
+        device="cpu",
         max_episodes=1000,
         training_steps_per_episode=20,
         dont_train_until_this_many_transitions=1000,
@@ -337,75 +390,80 @@ def run_linear_system_sac(
         actor_lr=5 * 1e-4,
         critic_lr=5 * 1e-4,
         entropy_scaling_lr=1e-3,
-        discount_factor=discount_factor,
-        batch_size=batch_size,
+        discount_factor=0.99,
+        batch_size=64,
         # Replay Buffer
         replay_buffer_size=10000,
         dtype_buffer=torch.float32,
         # Actor
         init_entropy_scaling=0.01,
-        target_entropy=target_entropy,
+        target_entropy=None,  # NOTE: target_entropy = -a_dim will be inferred from env, but only when still set as None
         minimal_std=1e-3,  # Will be used in every TanhNormal to avoid collapse of the distribution
-        param_factor=param_factor,  # Only in Actor with MPC
-        param_shift=param_shift,  # Only in Actor with MPC
+        param_factor=np.array([1.0, 1.0], dtype=np.float32),  # Only in Actor with MPC
+        param_shift=np.array([0, 0], dtype=np.float32),  # Only in Actor with MPC
         # Critic
-        tau=1e-2,  # For target network soft update
+        soft_update_factor=1e-2,
         soft_update_frequency=1,
         # Environment
-        max_time=max_time,
-        dt=dt,
-        a_dim=a_dim,
-        s_dim=s_dim,
-        param_dim=param_dim,
+        max_time=10.0,
+        dt=0.1,
+        a_dim=None,  # NOTE: a_dim  Will be inferred from env
+        s_dim=None,  # NOTE: s_dim  Will be inferred from env
+        p_learnable_dim=None,  # NOTE: p_learnable_dim Will be inferred from env
+        default_params={
+            "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
+            "B": np.array([[0.03125], [0.25]]),
+            "Q": np.identity(2),
+            "R": np.identity(1),
+            "b": np.array([[0.0], [0.0]]),
+            "f": np.array([[0.0], [0.0], [0.0]]),
+            "V_0": np.array([1e-3]),
+        },
+        learnable_params=["b"],
         # MPC-specific
         accept_n_nonconvergences_per_batch=0,
+        N_horizon=20,
         # Networks
         q_embed_size=64,  # should be half of hidden size
         hidden_dims=[128, 128],
         activation="leaky_relu",
     )
 
-    if scenario.value == Scenario.STANDARD_SAC.value:
-        mlp = MeanStdMLP(
-            s_dim=config.s_dim,
-            mean_dim=config.a_dim,
-            std_dim=config.a_dim,
-            hidden_dims=config.hidden_dims,
-            activation=config.activation,
-        )
-        actor_net = TanhNormalNetwork(
-            mean_std_module=mlp, minimal_std=config.minimal_std
-        )
-        actor = SACActor(
-            obs_to_action_module=actor_net,
-            module_contains_mpc=False,
-            init_entropy_scaling=config.init_entropy_scaling,
-            target_entropy=config.target_entropy,
-        )
 
-    elif scenario.value == Scenario.FO_U_SAC.value:
-        mlp = MeanStdMLP(
-            s_dim=config.s_dim,
-            mean_dim=config.param_dim,
-            std_dim=config.a_dim,
-            hidden_dims=config.hidden_dims,
-            activation=config.activation,
-        )
-        actor_net = FOUMPCNetwork(
-            mpc=mpc,
-            param_mean_action_std_model=mlp,
-            param_factor=config.param_factor,
-            param_shift=config.param_shift,
-            minimal_std=config.minimal_std,
-        )
-        actor = SACActor(
-            obs_to_action_module=actor_net,
-            module_contains_mpc=True,
-            init_entropy_scaling=config.init_entropy_scaling,
-            target_entropy=config.target_entropy,
-            accept_n_nonconvergences_per_batch=config.accept_n_nonconvergences_per_batch,
-            num_batch_dimensions=1,
-        )
+def run_linear_system_sac(
+    scenario: Scenario, savefile_directory_path: str, config_kwargs: dict
+) -> float:
+    """Run the linear system SAC.
+    Parameters:
+        scenario: The scenario to run.
+        savefile_directory_path: The path to the directory where the models (networks) will be saved.
+        config_kwargs: Kwargs that should be overwritten in the config.
+    Returns:
+        The last validation performance for testing purposes.
+    """
+
+    standard_config = standard_config_dict(
+        scenario, savefile_directory_path=savefile_directory_path
+    )
+    config = LinearSystemSACConfig(**{**standard_config, **config_kwargs})
+    mpc = create_mpc(config)
+    env = LinearSystemOcpEnv(mpc, dt=config.dt, max_time=config.max_time)
+    config.p_learnable_dim = env.p_learnable_space.shape[0]  # type:ignore
+
+    a_space = env.action_space
+    a_dim = a_space.shape[0]  # type:ignore
+    s_space = env.state_space
+    config.s_dim = s_space.shape[0]  # type:ignore
+    config.a_dim = a_dim
+    config.target_entropy = (
+        -a_dim if config.target_entropy is None else config.target_entropy
+    )
+
+    config.param_factor = np.array([1.0, 1.0], dtype=np.float32)
+    config.param_shift = np.array([0.0, 0.0], dtype=np.float32)
+    # General and training loop
+
+    actor = create_actor(config, scenario, mpc)
 
     if not config.q_embed_size * 2 == config.hidden_dims[0]:
         raise ValueError("The q_embed_size should be half of the hidden size.")
@@ -413,11 +471,7 @@ def run_linear_system_sac(
     critic2 = create_qnet(config)
     critic1_target = create_qnet(config)
     critic2_target = create_qnet(config)
-    buffer = ReplayBuffer(
-        buffer_limit=config.replay_buffer_size,
-        device=config.device,
-        obs_dtype=config.dtype_buffer,
-    )  # type:ignore
+    buffer = create_replay_buffer(config)
     trainer = LinearSystemSACTrainer(
         actor=actor,
         critic1=critic1,
@@ -427,7 +481,7 @@ def run_linear_system_sac(
         replay_buffer=buffer,
         config=config,
     )
-    trainer.training_loop(env, config)
+    return trainer.training_loop(env, config)
 
 
 if __name__ == "__main__":
@@ -443,5 +497,14 @@ if __name__ == "__main__":
     create_dir_if_not_exists(savefile_directory_path)
     savefile_directory_path = os.path.join(savefile_directory_path, "linear_system_sac")
     create_dir_if_not_exists(savefile_directory_path)
+    timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+    savefile_directory_path = os.path.join(
+        savefile_directory_path, scenario.name + "_" + timestamp
+    )
+    create_dir_if_not_exists(savefile_directory_path)
 
-    run_linear_system_sac(scenario, device, seed, savefile_directory_path)
+    run_linear_system_sac(
+        scenario,
+        savefile_directory_path,
+        dict(device=device, seed=seed, max_episodes=500),
+    )

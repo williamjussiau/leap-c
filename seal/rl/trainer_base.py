@@ -3,7 +3,7 @@ import gc
 import os
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, ContextManager
 
 import numpy as np
 import torch
@@ -100,38 +100,68 @@ class Trainer(ABC):
         self,
         ocp_env: OCPEnv,
         n_val_rollouts: int,
-        max_eps_length: int,
+        config: BaseTrainerConfig,
     ):
         """Do a deterministic validation run of the policy and return the mean of the cumulative reward over all validation episodes."""
         scores = []
         for _ in range(n_val_rollouts):
-            obs, info = ocp_env.reset()
-            s = self.map_ocp_env_output_to_circulation(obs)
-            terminated = False
-            truncated = False
-            score = 0
-            count = 0
-            while count < max_eps_length and not terminated and not truncated:
-                a = self.act(
-                    s,
-                    deterministic=True,
-                )
+            score = self.episode_rollout(ocp_env, True, torch.no_grad(), config)
+            scores.append(score)
+
+        return sum(scores) / n_val_rollouts
+
+    @abstractmethod
+    def goal_reached(self, max_val_score: float) -> bool:
+        """Returns True if the goal of training is reached and the training loop should be terminated
+        (independent from whether or not the maximum iterations are reached).
+
+        Parameters:
+            max_val_score: The highest validation score so far.
+        """
+        raise NotImplementedError()
+
+    def episode_rollout(
+        self,
+        ocp_env: OCPEnv,
+        validation: bool,
+        grad_or_no_grad: ContextManager,
+        config: BaseTrainerConfig,
+    ) -> float:
+        """Rollout an episode (including putting transitions into the replay buffer) and return the cumulative reward.
+        Parameters:
+            ocp_env: The gym environment.
+            validation: If True, the policy will act as if this is validation (e.g., turning off exploration).
+            grad_or_no_grad: A context manager in which to perform the rollout. E.g., torch.no_grad().
+            config: The configuration for the training loop.
+
+        Returns:
+            The cumulative reward of the episode.
+        """
+        score = 0
+        obs, info = ocp_env.reset(seed=config.seed)
+        s = self.map_ocp_env_output_to_circulation(obs)
+
+        terminated = False
+        truncated = False
+        count = 0
+        with grad_or_no_grad:
+            while count < config.max_eps_length and not terminated and not truncated:
+                a = self.act(s, deterministic=validation)
                 obs_prime, r, terminated, truncated, info = ocp_env.step(
                     self.map_policy_to_env(a)
                 )
                 s_prime = self.map_ocp_env_output_to_circulation(obs_prime)
+                self.replay_buffer.put((s, a, r, s_prime, terminated))
+                score += r  # type: ignore
                 s = s_prime
-                score += r  # type:ignore
                 count += 1
-            scores.append(score)
-
-        return sum(scores) / n_val_rollouts
+        return score
 
     def training_loop(
         self,
         ocp_env: OCPEnv,
         config: BaseTrainerConfig,
-    ):
+    ) -> float:
         """Call this function in your script to start the training loop.
         Saving works by calling the save method of the trainer object every
         save_interval many episodes or when validation returns a new best score.
@@ -145,31 +175,10 @@ class Trainer(ABC):
             grad_or_no_grad = torch.no_grad()
         else:
             grad_or_no_grad = contextlib.nullcontext()
-
-        score = 0.0
-        max_val_score = 0.0
+        max_val_score = -np.inf
 
         for n_epi in range(config.max_episodes):
-            obs, info = ocp_env.reset(seed=config.seed)
-            s = self.map_ocp_env_output_to_circulation(obs)
-
-            terminated = False
-            truncated = False
-            count = 0
-            with grad_or_no_grad:
-                while (
-                    count < config.max_eps_length and not terminated and not truncated
-                ):
-                    a = self.act(s)
-                    obs_prime, r, terminated, truncated, info = ocp_env.step(
-                        self.map_policy_to_env(a)
-                    )
-                    s_prime = self.map_ocp_env_output_to_circulation(obs_prime)
-                    self.replay_buffer.put((s, a, r, s_prime, terminated))
-                    score += r  # type: ignore
-                    s = s_prime
-                    count += 1
-            #        print("Episode " + str(n_epi) + " finished!")
+            score = self.episode_rollout(ocp_env, False, grad_or_no_grad, config)
             print("Episode rollout: ", n_epi, "Score: ", score)
             if (
                 self.replay_buffer.size()
@@ -184,24 +193,28 @@ class Trainer(ABC):
                 if n_epi % config.val_interval == 0:
                     # TODO Log this
                     avg_val_score = self.validate(
-                        ocp_env,
+                        ocp_env=ocp_env,
                         n_val_rollouts=config.n_val_rollouts,
-                        max_eps_length=config.max_eps_length,
+                        config=config,
                     )
                     print("avg_val_score: ", avg_val_score)
                     if avg_val_score > max_val_score:
-                        save_here = os.path.join(
+                        save_directory_for_models = os.path.join(
                             config.save_directory_path,
                             "val_score_" + str(avg_val_score),
                         )
-                        create_dir_if_not_exists(save_here)
+                        create_dir_if_not_exists(save_directory_for_models)
                         max_val_score = avg_val_score
-                        self.save(config.save_directory_path)
+                        self.save(save_directory_for_models)
+                    if self.goal_reached(max_val_score):
+                        # terminate training
+                        break
             if n_epi % config.save_interval == 0:
-                save_here = os.path.join(
+                save_directory_for_models = os.path.join(
                     config.save_directory_path, "episode_" + str(n_epi)
                 )
-                create_dir_if_not_exists(save_here)
-                self.save(config.save_directory_path)
+                create_dir_if_not_exists(save_directory_for_models)
+                self.save(save_directory_for_models)
             score = 0.0
         ocp_env.close()
+        return avg_val_score  # Return last validation score for testing purposes

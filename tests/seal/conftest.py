@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
 
-from seal.examples.linear_system import LinearSystemMPC
+from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
+from seal.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
 
 
 def generate_batch_variation(
@@ -67,6 +68,12 @@ def linear_mpc():
 
 
 @pytest.fixture(scope="session")
+def pendulum_on_cart_mpc() -> PendulumOnCartMPC:
+    """Fixture for the pendulum on cart MPC."""
+    return PendulumOnCartMPC()
+
+
+@pytest.fixture(scope="session")
 def n_batch() -> int:
     return 4
 
@@ -80,8 +87,46 @@ def learnable_linear_mpc(n_batch: int) -> LinearSystemMPC:
 
 
 @pytest.fixture(scope="session")
-def p_global(learnable_linear_mpc: LinearSystemMPC, n_batch: int) -> np.ndarray:
+def linear_system_ocp_env(learnable_linear_mpc: LinearSystemMPC) -> LinearSystemOcpEnv:
+    return LinearSystemOcpEnv(learnable_linear_mpc)
+
+
+@pytest.fixture(scope="session")
+def linear_mpc_p_global(
+    learnable_linear_mpc: LinearSystemMPC, n_batch: int
+) -> np.ndarray:
     """Fixture for the global parameters of the linear system MPC."""
     return generate_batch_variation(
         learnable_linear_mpc.ocp_solver.acados_ocp.p_global_values, n_batch
+    )
+
+
+@pytest.fixture(scope="session")
+def learnable_pendulum_on_cart_mpc(n_batch: int) -> PendulumOnCartMPC:
+    """Fixture for the pendulum on cart MPC with learnable parameters."""
+    return PendulumOnCartMPC(learnable_params=["M", "m", "g", "l"], n_batch=n_batch)
+
+
+@pytest.fixture(scope="session")
+def pendulum_on_cart_ocp_env(
+    learnable_pendulum_on_cart_mpc: PendulumOnCartMPC,
+) -> PendulumOnCartOcpEnv:
+    return PendulumOnCartOcpEnv(learnable_pendulum_on_cart_mpc)
+
+
+@pytest.fixture(scope="session")
+def all_ocp_env(
+    linear_system_ocp_env: LinearSystemOcpEnv,
+    pendulum_on_cart_ocp_env: PendulumOnCartOcpEnv,
+):
+    return [linear_system_ocp_env, pendulum_on_cart_ocp_env]
+
+
+@pytest.fixture(scope="session")
+def pendulum_on_cart_p_global(
+    learnable_pendulum_on_cart_mpc: PendulumOnCartMPC, n_batch: int
+) -> np.ndarray:
+    """Fixture for the global parameters of the pendulum on cart MPC."""
+    return generate_batch_variation(
+        learnable_pendulum_on_cart_mpc.ocp_solver.acados_ocp.p_global_values, n_batch
     )

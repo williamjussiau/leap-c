@@ -6,9 +6,10 @@ import pandas as pd
 
 import pytest
 
+from seal.examples.pendulum_on_cart import PendulumOnCartMPC
 from seal.mpc import MPC
 from seal.util import SX_to_labels
-from conftest import generate_batch_constant
+from conftest import generate_batch_variation, generate_batch_constant
 
 
 def compute_diff_solve_batch_solve(
@@ -660,12 +661,21 @@ def run_test_mpc_solve_and_batch_solve_on_batch_p_global(
 
 
 def test_linear_mpc_parametric_sensitivities(
-    learnable_linear_mpc: MPC, p_global: np.ndarray
+    learnable_linear_mpc: MPC, linear_mpc_p_global: np.ndarray
 ):
     run_test_mpc_solve_and_batch_solve_on_batch_p_global(
-        learnable_linear_mpc, p_global, plot=False
+        learnable_linear_mpc, linear_mpc_p_global, plot=False
     )
 
 
 if __name__ == "__main__":
     pytest.main([__file__])
+    # n_batch = 8
+    # mpc = PendulumOnCartMPC(
+    #     learnable_params=["M", "m", "g", "l", "Q", "R"], n_batch=n_batch
+    # )
+    # p_global = generate_batch_variation(
+    #     mpc.ocp_solver.acados_ocp.p_global_values, n_batch=n_batch
+    # )
+
+    # run_test_mpc_solve_and_batch_solve_on_batch_p_global(mpc, p_global, plot=True)

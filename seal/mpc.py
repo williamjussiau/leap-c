@@ -936,14 +936,14 @@ class MPC(ABC):
 
         # state constraints
         if self.ocp.constraints.lbx is not None:
-            cons["lbx"] = relu(self.ocp.constraints.lbx - x)
+            cons["lbx"] = relu(self.ocp.constraints.lbx - x[self.ocp.constraints.idxbx])
         if self.ocp.constraints.ubx is not None:
-            cons["ubx"] = relu(x - self.ocp.constraints.ubx)
+            cons["ubx"] = relu(x[self.ocp.constraints.idxbx] - self.ocp.constraints.ubx)
         # control constraints
         if self.ocp.constraints.lbu is not None:
-            cons["lbu"] = relu(self.ocp.constraints.lbu - u)
+            cons["lbu"] = relu(self.ocp.constraints.lbu - u[self.ocp.constraints.idxbu])
         if self.ocp.constraints.ubu is not None:
-            cons["ubu"] = relu(u - self.ocp.constraints.ubu)
+            cons["ubu"] = relu(u[self.ocp.constraints.idxbu] - self.ocp.constraints.ubu)
 
         # h constraints
         if self.ocp.model.con_h_expr is not None:

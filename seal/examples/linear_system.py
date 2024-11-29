@@ -7,11 +7,16 @@ from typing import Any
 import casadi as cs
 import numpy as np
 from acados_template import AcadosModel, AcadosOcp
-from casadi.tools import entry, struct_symSX
+from casadi.tools import struct_symSX
 from scipy.linalg import solve_discrete_are
 
 from seal.mpc import MPC
 from seal.ocp_env import OCPEnv
+
+from seal.examples.util import (
+    find_param_in_p_or_p_global,
+    translate_learnable_param_to_p_global,
+)
 
 
 class LinearSystemMPC(MPC):
@@ -49,7 +54,9 @@ class LinearSystemMPC(MPC):
             }
 
         learnable_params = learnable_params if learnable_params is not None else []
-        ocp = export_parametric_ocp(param=params, learnable_params=learnable_params)
+        ocp = export_parametric_ocp(
+            nominal_param=params, learnable_param=learnable_params
+        )
         configure_ocp_solver(ocp)
 
         super().__init__(ocp=ocp, discount_factor=discount_factor, n_batch=n_batch)
@@ -100,18 +107,6 @@ class LinearSystemOcpEnv(OCPEnv):
 
     def init_state(self):
         return self.mpc.ocp.constraints.x0.astype(dtype=np.float32)
-
-
-def find_param_in_p_or_p_global(param_name: list[str], model: AcadosModel) -> list:
-    if model.p == []:
-        return {key: model.p_global[key] for key in param_name}  # type:ignore
-    elif model.p_global is None:
-        return {key: model.p[key] for key in param_name}  # type:ignore
-    else:
-        return {
-            key: (model.p[key] if key in model.p.keys() else model.p_global[key])  # type:ignore
-            for key in param_name
-        }
 
 
 def disc_dyn_expr(model: AcadosModel):
@@ -182,10 +177,10 @@ def configure_ocp_solver(
 
 
 def export_parametric_ocp(
-    param: dict[str, np.ndarray],
+    nominal_param: dict[str, np.ndarray],
     cost_type="EXTERNAL",
     name: str = "lti",
-    learnable_params: list[str] | None = None,
+    learnable_param: list[str] | None = None,
 ) -> AcadosOcp:
     """
     Export a parametric optimal control problem (OCP) for a discrete-time linear time-invariant (LTI) system.
@@ -204,8 +199,8 @@ def export_parametric_ocp(
         AcadosOcp
             An instance of the AcadosOcp class representing the optimal control problem.
     """
-    if learnable_params is None:
-        learnable_params = []
+    if learnable_param is None:
+        learnable_param = []
     ocp = AcadosOcp()
 
     ocp.model.name = name
@@ -218,27 +213,11 @@ def export_parametric_ocp(
 
     ocp.solver_options.N_horizon = 40
 
-    # Add learnable parameters to p_global
-    if len(learnable_params) != 0:
-        ocp.model.p_global = struct_symSX(
-            [entry(key, shape=param[key].shape) for key in learnable_params]
-        )
-        ocp.p_global_values = np.concatenate(
-            [param[key].T.reshape(-1, 1) for key in learnable_params]
-        ).flatten()
-
-    # Add non_learnable parameters to p (stage-wise parameters)
-    non_learnable_params = [key for key in param.keys() if key not in learnable_params]
-    if len(non_learnable_params) != 0:
-        ocp.model.p = struct_symSX(
-            [entry(key, shape=param[key].shape) for key in non_learnable_params]
-        )
-        ocp.parameter_values = np.concatenate(
-            [param[key].T.reshape(-1, 1) for key in non_learnable_params]
-        ).flatten()
-
-    print("learnable_params", learnable_params)
-    print("non_learnable_params", non_learnable_params)
+    ocp = translate_learnable_param_to_p_global(
+        nominal_param=nominal_param,
+        learnable_param=learnable_param,
+        ocp=ocp,
+    )
 
     ocp.model.disc_dyn_expr = disc_dyn_expr(ocp.model)
 
@@ -249,7 +228,7 @@ def export_parametric_ocp(
     ocp.model.cost_expr_ext_cost = cost_expr_ext_cost(ocp.model)
 
     ocp.cost.cost_type_e = "EXTERNAL"
-    ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(ocp.model, param)
+    ocp.model.cost_expr_ext_cost_e = cost_expr_ext_cost_e(ocp.model, nominal_param)
 
     ocp.constraints.idxbx_0 = np.array([0, 1])
     ocp.constraints.lbx_0 = np.array([-1.0, -1.0])

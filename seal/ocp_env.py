@@ -45,16 +45,50 @@ class OCPEnv(gym.Env):
         self.p_learnable_space = self.derive_p_learnable_space()
 
     def derive_action_space(self) -> spaces.Box:
+        constraints = self.mpc.ocp.constraints
+        low = np.array(
+            [
+                constraints.lbu[i] if i in constraints.idxbu else -np.inf
+                for i in range(self.mpc.ocp.dims.nu)
+            ],
+            dtype=np.float32,
+        )
+
+        high = np.array(
+            [
+                constraints.ubu[i] if i in constraints.idxbu else +np.inf
+                for i in range(self.mpc.ocp.dims.nu)
+            ],
+            dtype=np.float32,
+        )
+
         return spaces.Box(
-            low=self.mpc.ocp.constraints.lbu.astype(np.float32),
-            high=self.mpc.ocp.constraints.ubu.astype(np.float32),
+            low=low,
+            high=high,
             dtype=np.float32,
         )
 
     def derive_state_space(self) -> spaces.Box:
+        constraints = self.mpc.ocp.constraints
+        low = np.array(
+            [
+                constraints.lbx[i] if i in constraints.idxbx else -np.inf
+                for i in range(self.mpc.ocp.dims.nx)
+            ],
+            dtype=np.float32,
+        )
+
+        high = np.array(
+            [
+                constraints.ubx[i] if i in constraints.idxbx else +np.inf
+                for i in range(self.mpc.ocp.dims.nx)
+            ],
+            dtype=np.float32,
+        )
+
         return spaces.Box(
-            low=self.mpc.ocp.constraints.lbx.astype(np.float32),
-            high=self.mpc.ocp.constraints.ubx.astype(np.float32),
+            low=low,
+            high=high,
             dtype=np.float32,
         )
 

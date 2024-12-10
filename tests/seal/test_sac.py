@@ -1,6 +1,7 @@
 import os
 import shutil
 
+import numpy as np
 import pytest
 
 from seal.examples.linear_system import LinearSystemOcpEnv
@@ -25,6 +26,7 @@ def test_standard_sac_does_it_run():
     savefile_dir_path = os.path.join(cwd, "test_standard_sac")
     create_dir_if_not_exists(savefile_dir_path)
     config_dict = standard_config_dict(scenario, savefile_dir_path)
+    G = np.array([[1.0, 0.25], [0.0, 1.0]])
     config_dict = {
         **config_dict,
         **dict(  # type:ignore
@@ -34,6 +36,18 @@ def test_standard_sac_does_it_run():
             training_steps_per_episode=2,
             batch_size=4,
             val_interval=8,
+            render_mode="rgb_array",
+            render_interval_exploration=5,
+            render_interval_validation=2,
+            default_params={
+                "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
+                "B": np.array([[0.03125], [0.25]]),
+                "Q": G.T @ G,  # np.identity(2),
+                "R": np.identity(1),
+                "b": np.array([[0.0], [0.0]]),
+                "f": np.array([[0.0], [0.0], [0.0]]),
+                "V_0": np.array([1e-3]),
+            },
         ),
     }
     val = run_linear_system_sac(
@@ -64,6 +78,7 @@ def test_standard_sac_does_it_run():
     iwannaload = os.path.join(savefile_dir_path, "episode_0")
     trainer.load(iwannaload)  # Test running loading.
     # Clean up after yourself
+    # NOTE: Comment this out if you want to see the rendering.
     shutil.rmtree(savefile_dir_path)
 
 
@@ -83,6 +98,9 @@ def test_fou_sac_does_it_run():
             training_steps_per_episode=2,
             batch_size=4,
             val_interval=8,
+            render_mode="rgb_array",
+            render_interval_exploration=5,
+            render_interval_validation=2,
         ),
     }
     val = run_linear_system_sac(
@@ -114,6 +132,7 @@ def test_fou_sac_does_it_run():
     iwannaload = os.path.join(savefile_dir_path, "episode_0")
     trainer.load(iwannaload)  # Test running loading.
     # Clean up after yourself
+    # NOTE: Comment this out if you want to see the rendering.
     shutil.rmtree(savefile_dir_path)
 
 

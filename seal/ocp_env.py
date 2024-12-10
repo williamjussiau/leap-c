@@ -25,7 +25,6 @@ class OCPEnv(gym.Env):
 
         Args:
             mpc: The learnable MPC planner.
-            learnable_params: The parameters that can be learned.
             dt: The time discretization of the environment.
             max_time: The maximum time per episode.
         """

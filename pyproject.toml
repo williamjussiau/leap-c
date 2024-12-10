@@ -24,7 +24,8 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = ["pytest", "pygame", "moviepy"]
+rendering = ["pygame", "moviepy"]
 
 [tool.setuptools]
 packages = ["seal"]

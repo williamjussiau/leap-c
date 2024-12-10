@@ -1,23 +1,25 @@
-import numpy as np
+from typing import Any
+
 import casadi as ca
-from acados_template import AcadosOcp, AcadosModel
-
-from seal.mpc import MPC
-from seal.ocp_env import OCPEnv
+import numpy as np
+import pygame
+from acados_template import AcadosModel, AcadosOcp
 from casadi.tools import struct_symSX
+from pygame import gfxdraw
 
+from seal.examples.render_utils import draw_arrow
 from seal.examples.util import (
     find_param_in_p_or_p_global,
     translate_learnable_param_to_p_global,
 )
-
-from typing import Any
+from seal.mpc import MPC
+from seal.ocp_env import OCPEnv
 
 
 class PendulumOnCartMPC(MPC):
     def __init__(
         self,
-        params: dict[str, np.ndarray] = None,
+        params: dict[str, np.ndarray] | None = None,
         learnable_params: list[str] | None = None,
         discount_factor: float = 0.99,
         n_batch: int = 1,
@@ -37,15 +39,21 @@ class PendulumOnCartMPC(MPC):
         )
         configure_ocp_solver(ocp)
 
+        self.given_default_param_dict = params
+
         super().__init__(ocp=ocp, discount_factor=discount_factor, n_batch=n_batch)
 
 
 class PendulumOnCartOcpEnv(OCPEnv):
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+    mpc: PendulumOnCartMPC
+
     def __init__(
         self,
         mpc: PendulumOnCartMPC,
         dt: float = 0.1,
         max_time: float = 10.0,
+        render_mode: str | None = None,
     ):
         super().__init__(
             mpc,
@@ -53,17 +61,28 @@ class PendulumOnCartOcpEnv(OCPEnv):
             max_time=max_time,
         )
 
+        # For rendering
+        if not (render_mode is None or render_mode in self.metadata["render_modes"]):
+            raise ValueError(
+                f"render_mode must be one of {self.metadata['render_modes']}"
+            )
+        self.render_mode = render_mode
+        self.pos_trajectory = None
+        self.pole_end_trajectory = None
+        self.screen_width = 600
+        self.screen_height = 400
+        self.window = None
+        self.clock = None
+
     def step(self, action: np.ndarray) -> tuple[Any, float, bool, bool, dict]:
         """Execute the dynamics of the pendulum on cart and add random noise to the resulting cart velocity."""
         o, r, term, trunc, info = super().step(
             action
         )  # o is the next state as np.ndarray, next parameters as MPCParameter
-        if self._np_random is None:
-            raise ValueError("First, reset needs to be called with a seed.")
-        noise = self._np_random.uniform(-0.1, 0)
         state = o[0].copy()
-        state[2] += noise
+        state[2] += self.current_noise
         self.x = state
+        self.current_noise = self.next_noise()
         o = (state, o[1])
 
         if state not in self.state_space:
@@ -75,10 +94,214 @@ class PendulumOnCartOcpEnv(OCPEnv):
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
     ) -> tuple[Any, dict]:  # type: ignore
-        return super().reset(seed=seed, options=options)
+        res = super().reset(seed=seed, options=options)
+        self.current_noise = self.next_noise()
+        self.pos_trajectory = None
+        self.pole_end_trajectory = None
+        return res
 
     def init_state(self):
         return np.array([0.0, np.pi, 0.0, 0.0], dtype=np.float32)
+
+    def next_noise(self) -> float:
+        """Return the next noise to be added to the state."""
+        if self._np_random is None:
+            raise ValueError("First, reset needs to be called with a seed.")
+        return self._np_random.uniform(-1, 0)
+
+    def include_this_state_trajectory_to_rendering(self, state_trajectory: np.ndarray):
+        """Meant for setting a state trajectory for rendering.
+        If a state trajectory is not set before the next call of render,
+        the rendering will not render a state trajectory.
+        NOTE: The record_video wrapper of gymnasium will call render() AFTER every step.
+        This means if you use the wrapper,
+        make a step,
+        calculate action and state trajectory from the observations,
+        and input the state trajectory with this function before taking the next step,
+        the picture being rendered after this next step will be showing the trajectory planned BEFORE DOING the step.
+        """
+        self.pos_trajectory = []
+        self.pole_end_trajectory = []
+        length = self.mpc.given_default_param_dict["l"]
+        for x in state_trajectory:
+            self.pos_trajectory.append(x[0])  # Only take coordinate
+            self.pole_end_trajectory.append(self.calc_pole_end(x[0], x[1], length))
+
+    def calc_pole_end(
+        self, x_coord: float, theta: float, length: float
+    ) -> tuple[float, float]:
+        # NOTE: The minus is necessary because theta is seen as counterclockwise
+        pole_x = x_coord - length * np.sin(theta)
+        pole_y = length * np.cos(theta)
+        return pole_x, pole_y
+
+    def render(self, action: np.ndarray):
+        if self.window is None and self.render_mode == "human":
+            pygame.init()
+            pygame.display.init()
+            self.window = pygame.display.set_mode(
+                (self.screen_width, self.screen_height)
+            )
+        if self.clock is None and self.render_mode == "human":
+            self.clock = pygame.time.Clock()
+
+        params = self.mpc.given_default_param_dict
+        world_width = self.mpc.ocp.constraints.ubx[0] - self.mpc.ocp.constraints.lbx[0]
+        center = (int(self.screen_width / 2), int(self.screen_height / 2))
+        scale = self.screen_width / world_width
+        polewidth = 10.0
+        polelen = scale * (params["l"])
+        cartwidth = 50.0
+        cartheight = 30.0
+        axleoffset = cartheight / 4.0
+        ground_height = 180
+
+        canvas = pygame.Surface((self.screen_width, self.screen_height))
+        canvas.fill((255, 255, 255))
+
+        # ground
+        gfxdraw.hline(canvas, 0, self.screen_width, ground_height, (0, 0, 0))
+
+        # cart
+        left, right, top, bot = (
+            -cartwidth / 2,
+            cartwidth / 2,
+            cartheight / 2,
+            -cartheight / 2,
+        )
+
+        pos = self.x[0]  # type:ignore
+        theta = self.x[1]  # type:ignore
+        cartx = pos * scale + center[0]
+        cart_coords = [(left, bot), (left, top), (right, top), (right, bot)]
+        cart_coords = [(c[0] + cartx, c[1] + ground_height) for c in cart_coords]
+        gfxdraw.aapolygon(canvas, cart_coords, (0, 0, 0))
+        gfxdraw.filled_polygon(canvas, cart_coords, (0, 0, 0))
+
+        # Draw the action and noise arrow
+        Fmax = self.mpc.ocp.constraints.ubu.item()
+        action_length = abs(int(action.item() / Fmax * scale))
+
+        if action.item() > 0:  # Draw on the right side
+            action_origin = (int(cartx + right), ground_height)
+            action_rotate_deg = 270
+            if self.current_noise > 0:
+                noise_origin = (action_origin[0] + action_length, action_origin[1])
+                noise_rotate_deg = action_rotate_deg
+            else:
+                noise_origin = (int(cartx + left), ground_height)
+                noise_rotate_deg = 90
+        else:  # Draw on the left side
+            action_origin = (int(cartx + left), ground_height)
+            action_rotate_deg = 90
+            if self.current_noise < 0:
+                noise_origin = (action_origin[0] - action_length, action_origin[1])
+                noise_rotate_deg = action_rotate_deg
+            else:
+                noise_origin = (int(cartx + right), ground_height)
+                noise_rotate_deg = 270
+        head_size = 8
+        draw_arrow(
+            canvas,
+            action_origin,
+            action_length,
+            head_size,
+            head_size,
+            action_rotate_deg,
+            color=(0, 0, 255),
+            width_line=3,
+        )
+        noise_length = abs(int(self.current_noise / Fmax * scale))
+        draw_arrow(
+            canvas,
+            noise_origin,
+            noise_length,
+            head_size,
+            head_size,
+            noise_rotate_deg,
+            color=(255, 0, 0),
+            width_line=3,
+        )
+
+        # pole
+        left, right, top, bot = (
+            -polewidth / 2,
+            polewidth / 2,
+            polelen - polewidth / 2,
+            -polewidth / 2,
+        )
+
+        pole_coords = []
+        for coord in [(left, bot), (left, top), (right, top), (right, bot)]:
+            coord = pygame.math.Vector2(coord).rotate_rad(theta)
+            coord = (coord[0] + cartx, coord[1] + ground_height + axleoffset)
+            pole_coords.append(coord)
+        pole_color = (202, 152, 101)
+        gfxdraw.aapolygon(canvas, pole_coords, pole_color)
+        gfxdraw.filled_polygon(canvas, pole_coords, pole_color)
+
+        # Axle of pole
+        gfxdraw.aacircle(
+            canvas,
+            int(cartx),
+            int(ground_height + axleoffset),
+            int(polewidth / 2),
+            (129, 132, 203),
+        )
+        gfxdraw.filled_circle(
+            canvas,
+            int(cartx),
+            int(ground_height + axleoffset),
+            int(polewidth / 2),
+            (129, 132, 203),
+        )
+
+        # Draw the planned trajectory if it exists
+        if self.pos_trajectory is not None:
+            if self.pole_end_trajectory is None:
+                raise AttributeError(
+                    "Why is pole_end_trajectory None, but pos_trajectory isn't?"
+                )
+            planxs = [int(x * scale + center[0]) for x in self.pos_trajectory]
+            plan_pole_end = [
+                (
+                    int(x * scale + center[0]),
+                    int(ground_height + axleoffset + y * scale - polewidth / 2),
+                )
+                for x, y in self.pole_end_trajectory
+            ]
+
+            # Draw the positions offset in the y direction for better visibility
+            for i, planx in enumerate(planxs):
+                if abs(planx) > self.screen_width:
+                    # Dont render out of bounds
+                    continue
+                gfxdraw.pixel(canvas, int(planx), int(ground_height + i), (255, 5, 5))
+            for i, plan_pole_end in enumerate(plan_pole_end):
+                if abs(plan_pole_end[0]) > self.screen_width:
+                    # Dont render out of bounds
+                    continue
+                gfxdraw.pixel(
+                    canvas, int(plan_pole_end[0]), int(plan_pole_end[1]), (5, 255, 5)
+                )
+
+        canvas = pygame.transform.flip(canvas, False, True)
+
+        if self.render_mode == "human":
+            self.window.blit(canvas, (0, 0))  # type:ignore
+            pygame.event.pump()
+            pygame.display.update()
+            self.clock.tick(self.metadata["render_fps"])  # type:ignore
+
+        else:  # rgb_array
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
+            )
+
+    def close(self):
+        if self.window is not None:
+            pygame.display.quit()
+            pygame.quit()
 
 
 def configure_ocp_solver(

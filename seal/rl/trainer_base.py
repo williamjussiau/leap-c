@@ -83,32 +83,10 @@ class Trainer(ABC):
         """Save the models in the given directory."""
         raise NotImplementedError()
 
+    @abstractmethod
     def load(self, save_directory: str):
         """Load the models from the given directory. Is ment to be exactly compatible with save."""
         raise NotImplementedError()
-
-    def map_ocp_env_output_to_circulation(self, obs: Any) -> Any:
-        """Maps observation to the observation in circulation (meaning it will be input to the act method and the buffer)."""
-        return obs
-
-    def map_policy_to_env(self, action: np.ndarray) -> np.ndarray:
-        """Is applied to the action (from self.act) before entering it to the environment,
-        (but is not applied to the action when being put into the replay buffer)."""
-        return action
-
-    def validate(
-        self,
-        ocp_env: OCPEnv,
-        n_val_rollouts: int,
-        config: BaseTrainerConfig,
-    ):
-        """Do a deterministic validation run of the policy and return the mean of the cumulative reward over all validation episodes."""
-        scores = []
-        for _ in range(n_val_rollouts):
-            score = self.episode_rollout(ocp_env, True, torch.no_grad(), config)
-            scores.append(score)
-
-        return sum(scores) / n_val_rollouts
 
     @abstractmethod
     def goal_reached(self, max_val_score: float) -> bool:
@@ -120,13 +98,28 @@ class Trainer(ABC):
         """
         raise NotImplementedError()
 
+    def validate(
+        self,
+        ocp_env: OCPEnv,
+        n_val_rollouts: int,
+        config: BaseTrainerConfig,
+    ):
+        """Do a deterministic validation run of the policy and return the mean of the cumulative reward over all validation episodes."""
+        scores = []
+        for _ in range(n_val_rollouts):
+            info = self.episode_rollout(ocp_env, True, torch.no_grad(), config)
+            score = info["score"]
+            scores.append(score)
+
+        return sum(scores) / n_val_rollouts
+
     def episode_rollout(
         self,
         ocp_env: OCPEnv,
         validation: bool,
         grad_or_no_grad: ContextManager,
         config: BaseTrainerConfig,
-    ) -> float:
+    ) -> dict:
         """Rollout an episode (including putting transitions into the replay buffer) and return the cumulative reward.
         Parameters:
             ocp_env: The gym environment.
@@ -135,27 +128,25 @@ class Trainer(ABC):
             config: The configuration for the training loop.
 
         Returns:
-            The cumulative reward of the episode.
+            A dictionary containing information about the rollout, at least containing the key
+
+            "score" for the cumulative score
         """
         score = 0
         obs, info = ocp_env.reset(seed=config.seed)
-        s = self.map_ocp_env_output_to_circulation(obs)
 
         terminated = False
         truncated = False
         count = 0
         with grad_or_no_grad:
             while count < config.max_eps_length and not terminated and not truncated:
-                a = self.act(s, deterministic=validation)
-                obs_prime, r, terminated, truncated, info = ocp_env.step(
-                    self.map_policy_to_env(a)
-                )
-                s_prime = self.map_ocp_env_output_to_circulation(obs_prime)
-                self.replay_buffer.put((s, a, r, s_prime, terminated))
+                a = self.act(obs, deterministic=validation)
+                obs_prime, r, terminated, truncated, info = ocp_env.step(a)
+                self.replay_buffer.put((obs, a, r, obs_prime, terminated))
                 score += r  # type: ignore
-                s = s_prime
+                obs = obs_prime
                 count += 1
-        return score
+        return dict(score=score)
 
     def training_loop(
         self,
@@ -178,7 +169,8 @@ class Trainer(ABC):
         max_val_score = -np.inf
 
         for n_epi in range(config.max_episodes):
-            score = self.episode_rollout(ocp_env, False, grad_or_no_grad, config)
+            info = self.episode_rollout(ocp_env, False, grad_or_no_grad, config)
+            score = info["score"]
             print("Episode rollout: ", n_epi, "Score: ", score)
             if (
                 self.replay_buffer.size()
@@ -215,6 +207,5 @@ class Trainer(ABC):
                 )
                 create_dir_if_not_exists(save_directory_for_models)
                 self.save(save_directory_for_models)
-            score = 0.0
         ocp_env.close()
         return avg_val_score  # Return last validation score for testing purposes

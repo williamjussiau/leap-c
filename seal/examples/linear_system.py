@@ -6,17 +6,19 @@ from typing import Any
 
 import casadi as cs
 import numpy as np
+import pygame
 from acados_template import AcadosModel, AcadosOcp
 from casadi.tools import struct_symSX
+from pygame import draw, gfxdraw
 from scipy.linalg import solve_discrete_are
 
-from seal.mpc import MPC
-from seal.ocp_env import OCPEnv
-
+from seal.examples.render_utils import draw_arrow, draw_ellipse_from_eigen
 from seal.examples.util import (
     find_param_in_p_or_p_global,
     translate_learnable_param_to_p_global,
 )
+from seal.mpc import MPC
+from seal.ocp_env import OCPEnv
 
 
 class LinearSystemMPC(MPC):
@@ -55,27 +57,41 @@ class LinearSystemMPC(MPC):
                 "V_0": np.array([1e-3]),
             }
 
+        Q = params["Q"]
+        R = params["R"]
+        W = np.block([[Q, np.zeros((2, 1))], [np.zeros((1, 2)), R]])
+        vals, vecs = np.linalg.eig(W)
+        if not np.all(vals > 0):
+            raise ValueError("Q and R should be positive definite.")
+
         learnable_params = learnable_params if learnable_params is not None else []
         ocp = export_parametric_ocp(
             param=params, learnable_params=learnable_params, N_horizon=N_horizon
         )
         configure_ocp_solver(ocp)
 
+        self.given_default_param_dict = params
+
         super().__init__(ocp=ocp, discount_factor=discount_factor, n_batch=n_batch)
 
 
 class LinearSystemOcpEnv(OCPEnv):
-    """The idea is that the linear system describes a point mass that is pushed by a force (noise)
+    """The idea is that the linear system describes a point mass that is pushed by a hidden force (noise)
     and the agent is required to learn to control the point mass in such a way that this force does not push
     the point mass over its boundaries (the constraints) while still minimizing the distance to the origin and
     minimizing control effort.
     """
+
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+
+    mpc: LinearSystemMPC
 
     def __init__(
         self,
         mpc: LinearSystemMPC,
         dt: float = 0.1,
         max_time: float = 10.0,
+        render_mode: str | None = None,
     ):
         super().__init__(
             mpc,
@@ -83,17 +99,29 @@ class LinearSystemOcpEnv(OCPEnv):
             max_time=max_time,
         )
 
+        # Will be added after doing a step.
+        self.current_noise = None
+
+        # For rendering
+        self.window_size = 512  # The size of the PyGame window
+        if not (render_mode is None or render_mode in self.metadata["render_modes"]):
+            raise ValueError(
+                f"render_mode must be one of {self.metadata['render_modes']}"
+            )
+        self.render_mode = render_mode
+        self.window = None
+        self.clock = None
+        self.state_trajectory = None
+
     def step(self, action: np.ndarray) -> tuple[Any, float, bool, bool, dict]:
         """Execute the dynamics of the linear system and push the resulting state with a random noise."""
         o, r, term, trunc, info = super().step(
             action
         )  # o is the next state as np.ndarray, next parameters as MPCParameter
-        if self._np_random is None:
-            raise ValueError("First, reset needs to be called with a seed.")
-        noise = self._np_random.uniform(-0.1, 0)
         state = o[0].copy()
-        state[0] += noise
+        state[0] += self.current_noise
         self.x = state
+        self.current_noise = self.next_noise()
         o = (state, o[1])
 
         if state not in self.state_space:
@@ -105,10 +133,175 @@ class LinearSystemOcpEnv(OCPEnv):
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
     ) -> tuple[Any, dict]:  # type: ignore
-        return super().reset(seed=seed, options=options)
+        res = super().reset(seed=seed, options=options)
+        self.state_trajectory = None
+        self.current_noise = self.next_noise()
+        return res
+
+    def next_noise(self) -> float:
+        """Return the next noise to be added to the state."""
+        if self._np_random is None:
+            raise ValueError("First, reset needs to be called with a seed.")
+        return self._np_random.uniform(-0.1, 0)
 
     def init_state(self):
         return self.mpc.ocp.constraints.x0.astype(dtype=np.float32)
+
+    def include_this_state_trajectory_to_rendering(self, state_trajectory: np.ndarray):
+        """Meant for setting a state trajectory for rendering.
+        If a state trajectory is not set before the next call of render,
+        the rendering will not render a state trajectory.
+        NOTE: The record_video wrapper of gymnasium will call render() AFTER every step.
+        This means if you use the wrapper,
+        make a step,
+        calculate action and state trajectory from the observations,
+        and input the state trajectory with this function before taking the next step,
+        the picture being rendered after this next step will be showing the trajectory planned BEFORE DOING the step.
+
+        Parameters:
+            planned_trajectory: The state trajectory to render, of shape (N+1, xdim).
+        """
+        if state_trajectory.shape != (self.mpc.N + 1, self.mpc.ocp.dims.nx):
+            raise ValueError(
+                f"Length of state trajectory should be {(self.mpc.N + 1, self.mpc.ocp.dims.nx)}, but is {state_trajectory.shape}."
+            )
+        if not np.allclose(state_trajectory[0], self.x):  # type:ignore
+            raise ValueError(
+                f"Initial state of state trajectory should be {self.x}, but is {state_trajectory[0]}. Are you sure this is the correct one?"
+            )
+        self.state_trajectory = state_trajectory
+
+    def render(self, action: np.ndarray):
+        if self.window is None and self.render_mode == "human":
+            pygame.init()
+            pygame.display.init()
+            self.window = pygame.display.set_mode((self.window_size, self.window_size))
+        if self.clock is None and self.render_mode == "human":
+            self.clock = pygame.time.Clock()
+
+        canvas = pygame.Surface((self.window_size, self.window_size))
+        canvas.fill((255, 255, 255))
+
+        center = (int(self.window_size / 2), int(self.window_size / 2))
+        scale = self.window_size / 2  # -1 to 1 has to span the whole window
+
+        params = self.mpc.given_default_param_dict
+
+        Q = params["Q"]
+        P = np.array([[0, 1], [1, 0]])
+        permuted_Q = (
+            P @ Q @ P
+        )  # Q needs to be permuted to correspond to how the state is drawn.
+        # Draw the optimum as black circle and ellipsoids representing the curvature of the cost function.
+        # NOTE: The linear part "f" is ignored
+        gfxdraw.aacircle(canvas, center[0], center[1], 8, (0, 0, 0))
+        gfxdraw.filled_circle(canvas, center[0], center[1], 8, (0, 0, 0))
+        draw_ellipse_from_eigen(canvas, center, 64, permuted_Q)
+        draw_ellipse_from_eigen(canvas, center, 128, permuted_Q)
+        draw_ellipse_from_eigen(canvas, center, 192, permuted_Q)
+        draw_ellipse_from_eigen(canvas, center, 256, permuted_Q)
+
+        state_in_window = self.x * scale + center  # type:ignore
+        # Make the ball stay within the halfplane on top of the screen.
+        # This means making [-1, 1] the constraints on the x axis (left-right)
+        # and [0, 1] the constraints on the y axis (down-up).
+        # High y coordinate is low on the screen.
+        state_y = self.window_size - int(state_in_window[0])
+        state_x = int(state_in_window[1])
+        # Draw agent as circle
+        gfxdraw.aacircle(canvas, state_x, state_y, 6, (0, 0, 200))
+        gfxdraw.filled_circle(canvas, state_x, state_y, 6, (0, 0, 200))
+
+        # Draw the state trajectory if it exists
+        if self.state_trajectory is not None:
+            planxs = self.state_trajectory * scale + center
+
+            bound = int(self.window_size / 2)
+            for i, planx in enumerate(planxs):
+                if np.any(np.abs(planx) > bound):
+                    # State out of window, dont render it
+                    continue
+                gfxdraw.pixel(canvas, int(planx[0]), int(planx[1]), (0, 0, 255))
+            self.state_trajectory = None  # Don't render the same trajectory again, except it is set explicitly
+
+        # Draw constraints
+        gfxdraw.hline(canvas, 0, self.window_size, center[1], (255, 0, 0))
+        gfxdraw.hline(canvas, 0, self.window_size, center[1] + 1, (255, 0, 0))
+
+        # Double line-thickness for better look
+        gfxdraw.hline(canvas, 0, self.window_size, 0, (255, 0, 0))
+        gfxdraw.hline(canvas, 0, self.window_size, 1, (255, 0, 0))
+
+        gfxdraw.vline(canvas, 0, 0, self.window_size, (255, 0, 0))
+        gfxdraw.vline(canvas, 1, 0, self.window_size, (255, 0, 0))
+
+        gfxdraw.vline(canvas, self.window_size - 2, 0, self.window_size, (255, 0, 0))
+        gfxdraw.vline(canvas, self.window_size - 1, 0, self.window_size, (255, 0, 0))
+
+        A = params["A"]
+        B = params["B"]
+        b = params["b"]
+
+        # Draw a green line to the transformed state
+        lin_transformed_state = A @ self.x
+        destination = (
+            int(scale * lin_transformed_state[1] + center[0]),
+            self.window_size - int(scale * lin_transformed_state[0] + center[1]),
+        )
+        draw.aaline(canvas, (0, 255, 0), (state_x, state_y), destination, 2)
+
+        # Draw the action the agent takes as blue (as agent) line
+        destination_old = destination
+        displacement_action = B @ action
+        destination = (
+            destination_old[0] + int(scale * displacement_action[1]),
+            destination_old[1] - int(scale * displacement_action[0]),
+        )
+        draw.aaline(canvas, (0, 0, 255), destination_old, destination, 2)
+
+        # Draw the displacement by "b" as green line
+        destination_old = destination
+        destination = (
+            destination_old[0] + int(scale * b[1].item()),
+            destination_old[1] - int(scale * b[0].item()),
+        )
+        draw.aaline(canvas, (0, 255, 0), destination_old, destination, 2)
+
+        # Draw the noise as red arrow
+        arrow_size = 8
+        destination_old = destination
+        arrow_length = int(abs(scale * self.current_noise))  # type:ignore
+        destination = (
+            destination_old[0],
+            destination_old[1] - arrow_length,  # type:ignore
+        )
+        color = (255, 0, 0)
+        draw_arrow(
+            canvas,
+            destination_old,
+            arrow_length,
+            arrow_size,
+            arrow_size,
+            0,
+            color,  # type:ignore
+            2,  # type:ignore
+        )
+
+        if self.render_mode == "human":
+            self.window.blit(canvas, (0, 0))  # type:ignore
+            pygame.event.pump()
+            pygame.display.update()
+            self.clock.tick(self.metadata["render_fps"])  # type:ignore
+
+        else:  # rgb_array
+            return np.transpose(
+                np.array(pygame.surfarray.pixels3d(canvas)), axes=(1, 0, 2)
+            )
+
+    def close(self):
+        if self.window is not None:
+            pygame.display.quit()
+            pygame.quit()
 
 
 def disc_dyn_expr(model: AcadosModel):

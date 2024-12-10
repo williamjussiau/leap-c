@@ -1,9 +1,15 @@
-from seal.examples.pendulum_on_cart import PendulumOnCartMPC
-import numpy as np
+import os
+import shutil
+from typing import Tuple
 
 import matplotlib.pyplot as plt
+import numpy as np
+import pytest
 from acados_template import AcadosOcpSolver
-from typing import Tuple
+from gymnasium.utils.save_video import save_video
+
+from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
+from seal.util import create_dir_if_not_exists
 
 
 def plot_cart_pole_solution(
@@ -43,10 +49,44 @@ def test_solution(
     fig, axs = plot_cart_pole_solution(ocp_solver)
 
 
+def test_closed_loop_rendering(
+    learnable_pendulum_on_cart_mpc: PendulumOnCartMPC,
+    pendulum_on_cart_ocp_env: PendulumOnCartOcpEnv,
+):
+    obs, _ = pendulum_on_cart_ocp_env.reset(seed=1337)
+
+    count = 0
+    terminated = False
+    truncated = False
+    frames = []
+    cwd = os.getcwd()
+    savefile_dir_path = os.path.join(cwd, "test_closed_loop_pendulum_on_cart")
+    create_dir_if_not_exists(savefile_dir_path)
+    while count < 200 and not terminated and not truncated:
+        a = learnable_pendulum_on_cart_mpc.policy(
+            obs[0], learnable_pendulum_on_cart_mpc.default_p_global
+        )[0]
+        frames.append(pendulum_on_cart_ocp_env.render(a))
+        obs_prime, r, terminated, truncated, info = pendulum_on_cart_ocp_env.step(a)
+        obs = obs_prime
+        count += 1
+    assert (
+        count < 200
+    ), "max_time and dt dictate that no more than 100 steps should be possible until termination."
+    save_video(
+        frames,  # type:ignore
+        video_folder=savefile_dir_path,
+        name_prefix="pendulum_on_cart",
+        fps=pendulum_on_cart_ocp_env.metadata["render_fps"],
+    )
+
+    shutil.rmtree(savefile_dir_path)
+
+
 def main():
     test_solution()
     plt.show()
 
 
 if __name__ == "__main__":
-    main()
+    pytest.main([__file__])

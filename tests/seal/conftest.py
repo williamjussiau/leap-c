@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
 from seal.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
+from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
 
 
 def generate_batch_variation(
@@ -88,7 +88,7 @@ def learnable_linear_mpc(n_batch: int) -> LinearSystemMPC:
 
 @pytest.fixture(scope="session")
 def linear_system_ocp_env(learnable_linear_mpc: LinearSystemMPC) -> LinearSystemOcpEnv:
-    return LinearSystemOcpEnv(learnable_linear_mpc)
+    return LinearSystemOcpEnv(learnable_linear_mpc, render_mode="rgb_array")
 
 
 @pytest.fixture(scope="session")
@@ -111,7 +111,7 @@ def learnable_pendulum_on_cart_mpc(n_batch: int) -> PendulumOnCartMPC:
 def pendulum_on_cart_ocp_env(
     learnable_pendulum_on_cart_mpc: PendulumOnCartMPC,
 ) -> PendulumOnCartOcpEnv:
-    return PendulumOnCartOcpEnv(learnable_pendulum_on_cart_mpc)
+    return PendulumOnCartOcpEnv(learnable_pendulum_on_cart_mpc, render_mode="rgb_array")
 
 
 @pytest.fixture(scope="session")

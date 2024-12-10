@@ -3,11 +3,13 @@ import os
 import random
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any, ContextManager
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from gymnasium.utils.save_video import save_video
 
 from seal.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
 from seal.mpc import MPC, MPCParameter, MPCState
@@ -226,6 +228,12 @@ class LinearSystemSACConfig(SACConfig):
     name: str
 
     # env
+    render_mode: str | None  # rgb_array or human
+    video_directory_path: str | None = (
+        None  # Only does something if render_mode is rgb_array
+    )
+    render_interval_exploration: int  # Only does something if render_mode is not None
+    render_interval_validation: int  # Only does something if render_mode is not None
     max_time: float
     dt: float
     a_dim: int | None  # NOTE: Will be inferred from env and is None until then
@@ -348,21 +356,115 @@ def create_mpc(
 
 
 class LinearSystemSACTrainer(SACTrainer):
+    def __init__(
+        self,
+        actor,
+        critic1,
+        critic2,
+        critic1_target,
+        critic2_target,
+        replay_buffer,
+        config,
+    ):
+        super().__init__(
+            actor=actor,
+            critic1=critic1,
+            critic2=critic2,
+            critic1_target=critic1_target,
+            critic2_target=critic2_target,
+            replay_buffer=replay_buffer,
+            config=config,
+        )
+        # Used for rendering
+        self.total_validation_rollouts = 0
+        self.total_exploration_rollouts = 0
+
     def act(
         self, obs: tuple[np.ndarray, MPCParameter], deterministic: bool = False
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         state, params = obs
         state_tensor = torch.tensor(
             state, dtype=self.replay_buffer.obs_dtype, device=self.device
         )
-        return tensor_to_numpy(
-            self.actor((state_tensor, params), deterministic=deterministic)[0]
-        )
+        output = self.actor((state_tensor, params), deterministic=deterministic)
+        return tensor_to_numpy(output[0]), output[-1]
 
     def goal_reached(self, max_val_score: float) -> bool:
         if max_val_score > -4:
             return True
         return False
+
+    def episode_rollout(
+        self,
+        ocp_env: LinearSystemOcpEnv,
+        validation: bool,
+        grad_or_no_grad: ContextManager,
+        config: LinearSystemSACConfig,
+    ) -> dict:
+        """Rollout an episode (including putting transitions into the replay buffer) and return the cumulative reward.
+        Parameters:
+            ocp_env: The gym environment.
+            validation: If True, the policy will act as if this is validation (e.g., turning off exploration).
+            grad_or_no_grad: A context manager in which to perform the rollout. E.g., torch.no_grad().
+            config: The configuration for the training loop.
+
+        Returns:
+            A dictionary containing information about the rollout, at containing the keys
+
+            "score" for the cumulative score
+        """
+        score = 0
+        obs, info = ocp_env.reset(seed=config.seed)
+
+        terminated = False
+        truncated = False
+        count = 0
+
+        if (
+            validation
+            and self.total_validation_rollouts % config.render_interval_validation == 0
+        ):
+            render_this = True
+            video_name = f"validation_{self.total_validation_rollouts}"
+        elif (
+            not validation
+            and self.total_exploration_rollouts % config.render_interval_exploration
+            == 0
+        ):
+            render_this = True
+            video_name = f"exploration_{self.total_exploration_rollouts}"
+        else:
+            render_this = False
+
+        if render_this:
+            frames = []
+        with grad_or_no_grad:
+            while count < config.max_eps_length and not terminated and not truncated:
+                a, stats = self.act(obs, deterministic=validation)
+                if render_this:
+                    frames.append(ocp_env.render(a))
+                obs_prime, r, terminated, truncated, info = ocp_env.step(a)
+                self.replay_buffer.put((obs, a, r, obs_prime, terminated))
+                score += r  # type: ignore
+                obs = obs_prime
+                count += 1
+            if render_this:
+                frames.append(ocp_env.render(a))
+        if validation:
+            self.total_validation_rollouts += 1
+        else:
+            self.total_exploration_rollouts += 1
+
+        if (
+            render_this and config.render_mode == "rgb_array"
+        ):  # human mode does not return frames
+            save_video(
+                frames,
+                video_folder=config.video_directory_path,  # type:ignore
+                name_prefix=video_name,
+                fps=ocp_env.metadata["render_fps"],
+            )
+        return dict(score=score)
 
 
 def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> dict:
@@ -405,6 +507,10 @@ def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> di
         soft_update_factor=1e-2,
         soft_update_frequency=1,
         # Environment
+        render_mode=None,  # rgb_array or human
+        video_directory_path=None,
+        render_interval_exploration=50,
+        render_interval_validation=5,
         max_time=10.0,
         dt=0.1,
         a_dim=None,  # NOTE: a_dim  Will be inferred from env
@@ -447,7 +553,9 @@ def run_linear_system_sac(
     )
     config = LinearSystemSACConfig(**{**standard_config, **config_kwargs})
     mpc = create_mpc(config)
-    env = LinearSystemOcpEnv(mpc, dt=config.dt, max_time=config.max_time)
+    env = LinearSystemOcpEnv(
+        mpc, dt=config.dt, max_time=config.max_time, render_mode=config.render_mode
+    )
     config.p_learnable_dim = env.p_learnable_space.shape[0]  # type:ignore
 
     a_space = env.action_space
@@ -481,6 +589,9 @@ def run_linear_system_sac(
         replay_buffer=buffer,
         config=config,
     )
+    if config.render_mode is not None:
+        config.video_directory_path = os.path.join(savefile_directory_path, "videos")
+
     return trainer.training_loop(env, config)
 
 
@@ -501,10 +612,11 @@ if __name__ == "__main__":
     savefile_directory_path = os.path.join(
         savefile_directory_path, scenario.name + "_" + timestamp
     )
+    video_path = os.path.join(savefile_directory_path, "videos")
     create_dir_if_not_exists(savefile_directory_path)
 
     run_linear_system_sac(
         scenario,
         savefile_directory_path,
-        dict(device=device, seed=seed, max_episodes=500),
+        dict(device=device, seed=seed, max_episodes=500, render_mode="rgb_array"),
     )

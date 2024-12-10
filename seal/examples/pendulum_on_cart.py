@@ -73,12 +73,18 @@ class PendulumOnCartOcpEnv(OCPEnv):
         self.screen_height = 400
         self.window = None
         self.clock = None
+        self.action_to_take = None
 
     def step(self, action: np.ndarray) -> tuple[Any, float, bool, bool, dict]:
         """Execute the dynamics of the pendulum on cart and add random noise to the resulting cart velocity."""
+        self.action_to_take = action
+        frame = None
+        if self.render_mode == "human" or self.render_mode == "rgb_array":
+            frame = self.render()
         o, r, term, trunc, info = super().step(
             action
         )  # o is the next state as np.ndarray, next parameters as MPCParameter
+        info["frame"] = frame
         state = o[0].copy()
         state[2] += self.current_noise
         self.x = state
@@ -135,7 +141,7 @@ class PendulumOnCartOcpEnv(OCPEnv):
         pole_y = length * np.cos(theta)
         return pole_x, pole_y
 
-    def render(self, action: np.ndarray):
+    def render(self):
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
@@ -180,9 +186,13 @@ class PendulumOnCartOcpEnv(OCPEnv):
 
         # Draw the action and noise arrow
         Fmax = self.mpc.ocp.constraints.ubu.item()
-        action_length = abs(int(action.item() / Fmax * scale))
+        if self.action_to_take is None:
+            raise ValueError(
+                "action_to_take is None, but it should be set before rendering."
+            )
+        action_length = abs(int(self.action_to_take.item() / Fmax * scale))
 
-        if action.item() > 0:  # Draw on the right side
+        if self.action_to_take.item() > 0:  # Draw on the right side
             action_origin = (int(cartx + right), ground_height)
             action_rotate_deg = 270
             if self.current_noise > 0:

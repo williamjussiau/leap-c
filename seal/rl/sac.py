@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from seal.nn.modules import CleanseAndReducePerSampleLoss
 from seal.rl.replay_buffer import ReplayBuffer
-from seal.rl.trainer_base import BaseTrainerConfig, Trainer
+from seal.rl.trainer import BaseTrainerConfig, Trainer
 from seal.util import add_prefix_extend, tensor_to_numpy
 
 

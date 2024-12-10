@@ -7,8 +7,9 @@ from typing import Any, ContextManager
 
 import numpy as np
 import torch
+from gymnasium import Env
+from gymnasium.utils.save_video import save_video
 
-from seal.ocp_env import OCPEnv
 from seal.rl.replay_buffer import ReplayBuffer
 from seal.util import create_dir_if_not_exists
 
@@ -31,13 +32,21 @@ def very_crude_debug_memory_leak():
 class BaseTrainerConfig:
     """Contains the necessary information for the training loop.
     Attributes:
+        seed: The seed for reproducibility.
+        device: The device on which the models will be trained.
         save_directory_path: The path to a directory where the models will be saved.
+        render_mode: The render_mode of the environment. If None, no rendering will be done.
+        video_directory_path: The path to a directory where videos will be saved.
+            Only does something if render_mode is rgb_array.
+        render_interval_exploration: Everytime current_exploration_episodes%render_interval_exploration == 0,
+            the episode is being rendered.
+        render_interval_validation: Everytime current_validation_episodes%render_interval_validation == 0,
+            the episode is being rendered.
         save_interval: The interval in which the models will be saved, additional to models being saved when validation hits a new high.
         max_episodes: The maximum number of episodes to rollout.
         training_per_episode: The number of training steps per episode.
         max_eps_length: The maximum number of steps in an episode.
         dont_train_until_this_many_transitions: The number of transitions that should be gathered in the replay buffer before training starts.
-        seed: The seed for reproducibility.
         val_interval: Every this many episodes a validation will be done.
         n_val_rollouts: Number of rollouts during validation.
         no_grad_during_rollout: If True, no gradients will be calculated during the rollout (for efficiency).
@@ -46,6 +55,11 @@ class BaseTrainerConfig:
     seed: int
     device: str
     save_directory_path: str
+
+    render_mode: str | None  # rgb_array or human
+    video_directory_path: str | None = None
+    render_interval_exploration: int
+    render_interval_validation: int
 
     max_episodes: int
     training_steps_per_episode: int
@@ -63,6 +77,9 @@ class Trainer(ABC):
 
     replay_buffer: ReplayBuffer
     device: str
+    # Used for rendering
+    total_validation_rollouts: int = 0
+    total_exploration_rollouts: int = 0
 
     @abstractmethod
     def act(self, obs: Any, deterministic: bool = False) -> np.ndarray:
@@ -100,7 +117,7 @@ class Trainer(ABC):
 
     def validate(
         self,
-        ocp_env: OCPEnv,
+        ocp_env: Env,
         n_val_rollouts: int,
         config: BaseTrainerConfig,
     ):
@@ -115,7 +132,7 @@ class Trainer(ABC):
 
     def episode_rollout(
         self,
-        ocp_env: OCPEnv,
+        ocp_env: Env,
         validation: bool,
         grad_or_no_grad: ContextManager,
         config: BaseTrainerConfig,
@@ -128,7 +145,7 @@ class Trainer(ABC):
             config: The configuration for the training loop.
 
         Returns:
-            A dictionary containing information about the rollout, at least containing the key
+            A dictionary containing information about the rollout, at containing the keys
 
             "score" for the cumulative score
         """
@@ -138,19 +155,54 @@ class Trainer(ABC):
         terminated = False
         truncated = False
         count = 0
+
+        if (
+            validation
+            and self.total_validation_rollouts % config.render_interval_validation == 0
+        ):
+            render_this = True
+            video_name = f"validation_{self.total_validation_rollouts}"
+        elif (
+            not validation
+            and self.total_exploration_rollouts % config.render_interval_exploration
+            == 0
+        ):
+            render_this = True
+            video_name = f"exploration_{self.total_exploration_rollouts}"
+        else:
+            render_this = False
+
+        if render_this:
+            frames = []
         with grad_or_no_grad:
             while count < config.max_eps_length and not terminated and not truncated:
-                a = self.act(obs, deterministic=validation)
+                a, stats = self.act(obs, deterministic=validation)
                 obs_prime, r, terminated, truncated, info = ocp_env.step(a)
-                self.replay_buffer.put((obs, a, r, obs_prime, terminated))
+                if render_this:
+                    frames.append(info["frame"])
+                self.replay_buffer.put((obs, a, r, obs_prime, terminated))  # type:ignore
                 score += r  # type: ignore
                 obs = obs_prime
                 count += 1
+        if validation:
+            self.total_validation_rollouts += 1
+        else:
+            self.total_exploration_rollouts += 1
+
+        if (
+            render_this and config.render_mode == "rgb_array"
+        ):  # human mode does not return frames
+            save_video(
+                frames,
+                video_folder=config.video_directory_path,  # type:ignore
+                name_prefix=video_name,
+                fps=ocp_env.metadata["render_fps"],
+            )
         return dict(score=score)
 
     def training_loop(
         self,
-        ocp_env: OCPEnv,
+        ocp_env: Env,
         config: BaseTrainerConfig,
     ) -> float:
         """Call this function in your script to start the training loop.

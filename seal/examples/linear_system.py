@@ -112,12 +112,20 @@ class LinearSystemOcpEnv(OCPEnv):
         self.window = None
         self.clock = None
         self.state_trajectory = None
+        self.action_to_take = None
 
     def step(self, action: np.ndarray) -> tuple[Any, float, bool, bool, dict]:
-        """Execute the dynamics of the linear system and push the resulting state with a random noise."""
+        """Execute the dynamics of the linear system and push the resulting state with a random noise.
+        If rendering is turned on, it will render the state BEFORE taking the step."""
+        self.action_to_take = action
+        frame = None
+        if self.render_mode == "human" or self.render_mode == "rgb_array":
+            frame = self.render()
         o, r, term, trunc, info = super().step(
             action
         )  # o is the next state as np.ndarray, next parameters as MPCParameter
+        info["frame"] = frame
+
         state = o[0].copy()
         state[0] += self.current_noise
         self.x = state
@@ -135,6 +143,7 @@ class LinearSystemOcpEnv(OCPEnv):
     ) -> tuple[Any, dict]:  # type: ignore
         res = super().reset(seed=seed, options=options)
         self.state_trajectory = None
+        self.action_to_take = None
         self.current_noise = self.next_noise()
         return res
 
@@ -171,7 +180,7 @@ class LinearSystemOcpEnv(OCPEnv):
             )
         self.state_trajectory = state_trajectory
 
-    def render(self, action: np.ndarray):
+    def render(self):
         if self.window is None and self.render_mode == "human":
             pygame.init()
             pygame.display.init()
@@ -250,9 +259,11 @@ class LinearSystemOcpEnv(OCPEnv):
         )
         draw.aaline(canvas, (0, 255, 0), (state_x, state_y), destination, 2)
 
-        # Draw the action the agent takes as blue (as agent) line
+        # Draw the action the agent takes as blue (as agent) line#
+        if self.action_to_take is None:
+            raise ValueError("action_to_be_taken should be set before calling render.")
         destination_old = destination
-        displacement_action = B @ action
+        displacement_action = B @ self.action_to_take
         destination = (
             destination_old[0] + int(scale * displacement_action[1]),
             destination_old[1] - int(scale * displacement_action[0]),

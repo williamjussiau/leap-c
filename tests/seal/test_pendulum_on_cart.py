@@ -66,8 +66,8 @@ def test_closed_loop_rendering(
         a = learnable_pendulum_on_cart_mpc.policy(
             obs[0], learnable_pendulum_on_cart_mpc.default_p_global
         )[0]
-        frames.append(pendulum_on_cart_ocp_env.render(a))
         obs_prime, r, terminated, truncated, info = pendulum_on_cart_ocp_env.step(a)
+        frames.append(info["frame"])
         obs = obs_prime
         count += 1
     assert (

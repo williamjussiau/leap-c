@@ -1,10 +1,10 @@
 import numpy as np
+import pytest
 import torch
 
 from seal.examples.linear_system import LinearSystemMPC
 from seal.mpc import MPCParameter
 from seal.nn.modules import CleanseAndReducePerSampleLoss, MPCSolutionModule
-import pytest
 
 
 def test_MPCSolutionModule_on_LinearSystemMPC(
@@ -57,11 +57,9 @@ def test_MPCSolutionModule_on_LinearSystemMPC(
     )
 
     def only_dQdx0(x0: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:  #
-        u0.requires_grad = False
         u_star, Q, status = mpc_module.forward(
             x0, u0=u0, p_global=p, p_stagewise=p_rests, initializations=None
         )
-        u0.requires_grad = True
         assert torch.all(
             torch.isnan(u_star)
         ), "u_star should be nan, since u0 is given."
@@ -101,7 +99,6 @@ def test_MPCSolutionModule_on_LinearSystemMPC(
     )
 
     def only_dQdp_global(p_global: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        u0.requires_grad = False
         u_star, Q, status = mpc_module.forward(
             x0=x0_torch,
             u0=u0,
@@ -109,7 +106,6 @@ def test_MPCSolutionModule_on_LinearSystemMPC(
             p_stagewise=p_rests,
             initializations=None,
         )
-        u0.requires_grad = True
         assert torch.all(
             torch.isnan(u_star)
         ), "u_star should be nan, since u0 is given."
@@ -128,8 +124,7 @@ def test_MPCSolutionModule_on_LinearSystemMPC(
         ), "u_star should be nan, since u0 is given."
         return Q, status
 
-    # TODO: Turn on when sensitivities are implemented
-    # torch.autograd.gradcheck(only_dQdu0, u0, atol=1e-2, eps=1e-4, raise_exception=True)
+    torch.autograd.gradcheck(only_dQdu0, u0, atol=1e-2, eps=1e-4, raise_exception=True)
 
 
 def test_CleanseAndReduce():

@@ -3,13 +3,11 @@ from typing import Dict, Tuple
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
 import pytest
+from conftest import generate_batch_constant
 
-from seal.examples.pendulum_on_cart import PendulumOnCartMPC
 from seal.mpc import MPC
 from seal.util import SX_to_labels
-from conftest import generate_batch_variation, generate_batch_constant
 
 
 def compute_diff_solve_batch_solve(
@@ -398,7 +396,7 @@ def run_batch_solve(
 
     # TODO: This assumes nu = 1 for the policy. Modify to cover the case where nu > 1
     for key, compute_func in computations.items():
-        batch_value, batch_gradient = compute_func()
+        batch_value, batch_gradient, status = compute_func()
         results["_batch_solve"][key]["value"][:, i_param] = (
             batch_value if key != "policy" else batch_value
         ).flatten()
@@ -407,6 +405,9 @@ def run_batch_solve(
             if key != "policy"
             else batch_gradient[:, 0, i_param]
         )
+        assert np.all(
+            status == 0
+        ), f"Some samples in the Batch solve did not converge for {key}"
 
 
 def run_individual_solve(
@@ -433,13 +434,14 @@ def run_individual_solve(
 
     # TODO: This assumes nu = 1 for the policy. Modify to cover the case where nu > 1
     for key, compute_func in computations.items():
-        solve_value, solve_gradient = compute_func()
+        solve_value, solve_gradient, status = compute_func()
         results["_solve"][key]["value"][k, i_param] = solve_value[0]
         results["_solve"][key]["gradient"][k, i_param] = (
             solve_gradient[i_param]
             if key != "policy"
             else solve_gradient.reshape(-1)[i_param]
         )
+        assert np.all(status == 0), f"Individual solve did not converge for {key}"
 
 
 def find_varying_column(arr: np.ndarray) -> np.ndarray:

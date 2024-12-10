@@ -1,6 +1,5 @@
 import numpy as np
 import numpy.testing as npt
-
 import pytest
 
 from seal.examples.linear_system import LinearSystemMPC
@@ -97,8 +96,10 @@ def test_closed_loop(
 
     p_global = learnable_linear_mpc.ocp.p_global_values
 
-    for _ in range(100):
-        u.append(learnable_linear_mpc.policy(x[-1], p_global=p_global)[0])
+    for step in range(100):
+        u_star, _, status = learnable_linear_mpc.policy(x[-1], p_global=p_global)
+        assert status == 0, f"Did not converge to a solution in step {step}"
+        u.append(u_star)
         x.append(learnable_linear_mpc.ocp_solver.get(1, "x"))
         assert learnable_linear_mpc.ocp_solver.get_status() == 0
 

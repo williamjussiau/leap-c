@@ -433,6 +433,8 @@ class MPC(ABC):
             return False
         elif isinstance(model_p, ca.SX):
             return 0 not in model_p.shape
+        elif isinstance(model_p, np.ndarray):
+            return model_p.size != 0
         elif isinstance(model_p, list) or isinstance(model_p, tuple):
             return len(model_p) != 0
         else:
@@ -440,7 +442,7 @@ class MPC(ABC):
 
     def state_value(
         self, state: np.ndarray, p_global: np.ndarray | None, sens: bool = False
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
         """
         Compute the value function for the given state.
 
@@ -448,13 +450,13 @@ class MPC(ABC):
             state: The state for which to compute the value function.
 
         Returns:
-            The value function and dvalue_dp_global if requested.
+            The value function, dvalue_dp_global if requested, and the status of the computation (whether it succeded, etc.).
         """
 
         mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
         mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
-        return mpc_output.V, mpc_output.dvalue_dp_global  # type:ignore
+        return mpc_output.V, mpc_output.dvalue_dp_global, mpc_output.status  # type:ignore
 
     def state_action_value(
         self,
@@ -462,7 +464,7 @@ class MPC(ABC):
         action: np.ndarray,
         p_global: np.ndarray | None,
         sens: bool = False,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
         """
         Compute the state-action value function for the given state and action.
 
@@ -471,7 +473,7 @@ class MPC(ABC):
             action: The action for which to compute the value function.
 
         Returns:
-            The state-action value function and dQ_dp_global if requested.
+            The state-action value function, dQ_dp_global if requested, and the status of the computation (whether it succeded, etc.).
         """
 
         mpc_input = MPCInput(
@@ -479,7 +481,7 @@ class MPC(ABC):
         )
         mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
-        return mpc_output.Q, mpc_output.dvalue_dp_global  # type:ignore
+        return mpc_output.Q, mpc_output.dvalue_dp_global, mpc_output.status  # type:ignore
 
     def policy(
         self,
@@ -487,7 +489,7 @@ class MPC(ABC):
         p_global: np.ndarray | None,
         sens: bool = False,
         use_adj_sens: bool = True,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    ) -> tuple[np.ndarray, np.ndarray | None, np.ndarray]:
         """
         Compute the policy for the given state.
 
@@ -497,7 +499,7 @@ class MPC(ABC):
             sens: Whether to compute the sensitivity of the policy with respect to the parameters.
             use_adj_sens: Whether to use adjoint sensitivity.
         Returns:
-            The policy and du0_dp_global if requested.
+            The policy, du0_dp_global if requested, and the status of the computation (whether it succeded, etc.).
         """
 
         mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
@@ -506,7 +508,7 @@ class MPC(ABC):
             mpc_input=mpc_input, dudp=sens, use_adj_sens=use_adj_sens
         )
 
-        return mpc_output.u0, mpc_output.du0_dp_global
+        return mpc_output.u0, mpc_output.du0_dp_global, mpc_output.status  # type:ignore
 
     def __call__(
         self,
@@ -607,7 +609,7 @@ class MPC(ABC):
         dvdp: bool = False,
         use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, AcadosOcpFlattenedIterate]:
-        if mpc_input.u0 is not None and dvdu:
+        if mpc_input.u0 is None and dvdu:
             raise ValueError("dvdu is only allowed if u0 is set in the input.")
 
         use_sensitivity_solver = dudx or dudp or dvdp
@@ -634,8 +636,11 @@ class MPC(ABC):
         if use_sensitivity_solver:
             if dudx:
                 kw["du0_dx0"] = self.ocp_sensitivity_solver.eval_solution_sensitivity(
-                    stages=0, with_respect_to="initial_state"
-                )[1]
+                    stages=0,
+                    with_respect_to="initial_state",
+                    return_sens_u=True,
+                    return_sens_x=False,
+                )["sens_u"]
 
             if dudp:
                 if use_adj_sens:
@@ -655,8 +660,11 @@ class MPC(ABC):
                 else:
                     kw["du0_dp_global"] = (
                         self.ocp_sensitivity_solver.eval_solution_sensitivity(
-                            0, "p_global"
-                        )[1]
+                            0,
+                            "p_global",
+                            return_sens_u=True,
+                            return_sens_x=False,
+                        )["sens_u"]
                     )
 
             if dvdp:
@@ -673,9 +681,9 @@ class MPC(ABC):
 
         # NB: Assumes we are evaluating dQdu0 here
         if dvdu:
-            kw["dvalue_du0"] = self.ocp_solver.get(0, "lam")[
-                : self.ocp_solver.acados_ocp.dims.nu
-            ]
+            kw["dvalue_du0"] = self.ocp_solver.eval_and_get_optimal_value_gradient(
+                with_respect_to="initial_control"
+            )
 
         # get mpc state
         flat_iterate = self.ocp_solver.store_iterate_to_flat_obj()
@@ -711,7 +719,7 @@ class MPC(ABC):
         dvdp: bool = False,
         use_adj_sens: bool = True,
     ) -> tuple[MPCOutput, AcadosOcpFlattenedBatchIterate]:
-        if mpc_input.u0 is not None and dvdu:
+        if mpc_input.u0 is None and dvdu:
             raise ValueError("dvdu is only allowed if u0 is set in the input.")
 
         use_sensitivity_solver = dudx or dudp or dvdp
@@ -753,8 +761,11 @@ class MPC(ABC):
                 kw["du0_dx0"] = np.array(
                     [
                         ocp_sensitivity_solver.eval_solution_sensitivity(
-                            stages=0, with_respect_to="initial_state"
-                        )[1]
+                            stages=0,
+                            with_respect_to="initial_state",
+                            return_sens_u=True,
+                            return_sens_x=False,
+                        )["sens_u"]
                         for ocp_sensitivity_solver in self.ocp_batch_sensitivity_solver.ocp_solvers
                     ]
                 )
@@ -786,8 +797,11 @@ class MPC(ABC):
                     kw["du0_dp_global"] = np.array(
                         [
                             ocp_sensitivity_solver.eval_solution_sensitivity(
-                                0, "p_global"
-                            )[1]
+                                0,
+                                "p_global",
+                                return_sens_u=True,
+                                return_sens_x=False,
+                            )["sens_u"]
                             for ocp_sensitivity_solver in self.ocp_batch_sensitivity_solver.ocp_solvers
                         ]
                     ).reshape(self.n_batch, self.ocp.dims.nu, self.p_global_dim)
@@ -812,8 +826,11 @@ class MPC(ABC):
             kw["du0_dx0"] = np.array(
                 [
                     ocp_solver.eval_solution_sensitivity(
-                        0, with_respect_to="initial_state"
-                    )[1]
+                        0,
+                        with_respect_to="initial_state",
+                        return_sens_u=True,
+                        return_sens_x=False,
+                    )["sens_u"]
                     for ocp_solver in self.ocp_batch_solver.ocp_solvers
                 ]
             )
@@ -827,7 +844,14 @@ class MPC(ABC):
                 ]
             )
         if dvdu:
-            raise NotImplementedError("Batch sensitivity not implemented for dvdu.")
+            kw["dvalue_du0"] = np.array(
+                [
+                    solver.eval_and_get_optimal_value_gradient(
+                        with_respect_to="initial_control"
+                    )
+                    for solver in self.ocp_batch_solver.ocp_solvers
+                ]
+            )
 
         # TODO here we return a batch iterate object
         flat_iterate = self.ocp_batch_solver.store_iterate_to_flat_obj()
@@ -887,13 +911,12 @@ class MPC(ABC):
         Returns:
             The parameters for the given stage.
         """
-        p_global = None
-        p_stage = None
-
-        if self.ocp.model.p_global is not None:
-            p_global = self.ocp.p_global_values
-        if self.ocp.model.p is not None:
-            p_stage = self.ocp.parameter_values
+        p_global = self.default_p_global
+        p_stage = (
+            self.default_p_stagewise[stage]
+            if self.default_p_stagewise is not None
+            else None
+        )
 
         if mpc_param is not None:
             if mpc_param.p_global is not None:
@@ -935,25 +958,25 @@ class MPC(ABC):
         cons = {}
 
         # state constraints
-        if self.ocp.constraints.lbx is not None:
+        if self.ocp.constraints.lbx.size > 0:
             cons["lbx"] = relu(self.ocp.constraints.lbx - x[self.ocp.constraints.idxbx])
-        if self.ocp.constraints.ubx is not None:
+        if self.ocp.constraints.ubx.size > 0:
             cons["ubx"] = relu(x[self.ocp.constraints.idxbx] - self.ocp.constraints.ubx)
         # control constraints
-        if self.ocp.constraints.lbu is not None:
+        if self.ocp.constraints.lbu.size > 0:
             cons["lbu"] = relu(self.ocp.constraints.lbu - u[self.ocp.constraints.idxbu])
-        if self.ocp.constraints.ubu is not None:
+        if self.ocp.constraints.ubu.size > 0:
             cons["ubu"] = relu(u[self.ocp.constraints.idxbu] - self.ocp.constraints.ubu)
 
         # h constraints
-        if self.ocp.model.con_h_expr is not None:
+        if self.ocp.model.con_h_expr != []:
             if self._h_fn is None:
                 inputs = [self.ocp.model.x, self.ocp.model.u]
 
-                if self.ocp.model.p_global is not None:
+                if self.default_p_global is not None:
                     inputs.append(self.ocp.model.p_global)
 
-                if self.ocp.model.p is not None:
+                if self.default_p_stagewise is not None:
                     inputs.append(self.ocp.model.p)  # type: ignore
 
                 self._h_fn = ca.Function("h", inputs, [self.ocp.model.con_h_expr])
@@ -998,10 +1021,10 @@ class MPC(ABC):
         if self._cost_fn is None:
             inputs = [self.ocp.model.x, self.ocp.model.u]
 
-            if self.ocp.model.p_global is not None:
+            if self.default_p_global is not None:
                 inputs.append(self.ocp.model.p_global)
 
-            if self.ocp.model.p is not None:
+            if self.default_p_stagewise is not None:
                 inputs.append(self.ocp.model.p)
 
             self._cost_fn = ca.Function(

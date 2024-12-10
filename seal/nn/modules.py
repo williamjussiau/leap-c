@@ -100,14 +100,13 @@ class MPCSolutionModule(nn.Module):
                 NOTE that this is a tensor of shape (1, ) containing NaN if u0 was given in the forward pass.
             value: The value of the MPC solution (the cost of the objective function in the solution).
                 Corresponds to the Value function if u0 is not given, and the Q function if u0 is given.
-                NOTE: Not differentiable yet.
             status: The status of the MPC solution, where 0 means converged and all other integers count as not converged,
                 (useful for e.g., logging, debugging or cleaning the backward pass from non-converged solutions).
 
         NOTE: An extension to allow for outputting and differentiating also with respect to other stages
             (meaning stages of the action and state trajectories) than the first one is possible, but not implemented yet.
         NOTE: Using a multiphase MPC formulation allows differentiation with respect to parameters that are not "truly" global,
-            but this is not implemented yet?
+            but this is not implemented yet.
         """
         return MPCSolutionFunction.apply(  # type:ignore
             self.mpc,

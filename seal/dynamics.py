@@ -134,11 +134,11 @@ class CasadiDynamics(Dynamics):
         inputs = [ocp.model.x, ocp.model.u]
         names = ["x", "u"]
 
-        if ocp.model.p_global is not None:
+        if self.mpc.default_p_global is not None:
             inputs.append(ocp.model.p_global)
             names.append("p_global")
 
-        if ocp.model.p is not None:
+        if self.mpc.default_p_stagewise is not None:
             inputs.append(ocp.model.p)
             names.append("p")
 
@@ -206,8 +206,8 @@ class CasadiDynamics(Dynamics):
         jac = self.jac_fn(inputs_cat).full().T  # type: ignore
         if len(x_shape) > 1:
             jac = jac.reshape(x_shape[0], -1, x_shape[1])
-            Sx, Su, _ = np.split(jac, splits, axis=1)
+            Sx, Su = np.split(jac, splits, axis=1)[:2]
         else:
-            Sx, Su, _ = np.split(jac, splits, axis=0)
+            Sx, Su = np.split(jac, splits, axis=0)[:2]
 
         return output, Sx, Su

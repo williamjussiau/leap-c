@@ -261,18 +261,13 @@ class MPCSolutionFunction(autograd.Function):
             grad_p = None
 
         if need_du0:
-            # TODO: Turn on when sensitivities exist.
-            # dvaluedu0 = ctx.dvaluedu0
-            # if dvaluedu0 is None:
-            #     raise ValueError(
-            #         "Something went wrong: The necessary sensitivities dvaluedu0 from the forward pass do not exist."
-            #     )
-            # dvaluedu0 = torch.tensor(dvaluedu0, device=device, dtype=dtype)
-            # grad_u = torch.einsum("bj,b->bj", dvaluedu0, dLdvalue)
-            if torch.any(dLossdvalue):
+            dvaluedu0 = ctx.dvaluedu0
+            if dvaluedu0 is None:
                 raise ValueError(
-                    "Sensitivities of value for u0 are not implemented yet."
+                    "Something went wrong: The necessary sensitivities dvaluedu0 from the forward pass do not exist."
                 )
+            dvaluedu0 = torch.tensor(dvaluedu0, device=device, dtype=dtype)
+            grad_u = torch.einsum("bj,b->bj", dvaluedu0, dLossdvalue)
         else:
             grad_u = None
 

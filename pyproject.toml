@@ -26,6 +26,9 @@ classifiers = [
 [project.optional-dependencies]
 test = ["pytest", "pygame", "moviepy"]
 rendering = ["pygame", "moviepy"]
+docs = ["sphinx", "sphinx_rtd_theme", "myst-parser"]
+dev = ["seal[rendering]", "seal[docs]", "seal[test]"]
+
 
 [tool.setuptools]
 packages = ["seal"]

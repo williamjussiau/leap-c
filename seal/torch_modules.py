@@ -274,8 +274,6 @@ class FOUMPCNetwork(nn.Module):
             p_stagewise=p_stagewise,
             initializations=mpc_initialization,
         )
-        if torch.any(mpc_status):
-            print("WARNING: Status != 0 encountered.")
         stats["mean_from_mpc"] = action_mean
         stats["std_from_net"] = action_std
 

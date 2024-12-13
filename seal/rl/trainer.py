@@ -63,7 +63,6 @@ class BaseTrainerConfig:
 
     max_episodes: int
     training_steps_per_episode: int
-    max_eps_length: int  # TODO: Usually this should be in the env, right?
     dont_train_until_this_many_transitions: int
     val_interval: int
     n_val_rollouts: int
@@ -105,16 +104,6 @@ class Trainer(ABC):
         """Load the models from the given directory. Is ment to be exactly compatible with save."""
         raise NotImplementedError()
 
-    @abstractmethod
-    def goal_reached(self, max_val_score: float) -> bool:
-        """Returns True if the goal of training is reached and the training loop should be terminated
-        (independent from whether or not the maximum iterations are reached).
-
-        Parameters:
-            max_val_score: The highest validation score so far.
-        """
-        raise NotImplementedError()
-
     def validate(
         self,
         ocp_env: Env,
@@ -154,28 +143,29 @@ class Trainer(ABC):
 
         terminated = False
         truncated = False
-        count = 0
 
         if (
             validation
             and self.total_validation_rollouts % config.render_interval_validation == 0
         ):
             render_this = True
-            video_name = f"validation_{self.total_validation_rollouts}"
+            video_name = "validation"
+            episode_index = self.total_validation_rollouts
         elif (
             not validation
             and self.total_exploration_rollouts % config.render_interval_exploration
             == 0
         ):
             render_this = True
-            video_name = f"exploration_{self.total_exploration_rollouts}"
+            video_name = "exploration"
+            episode_index = self.total_exploration_rollouts
         else:
             render_this = False
 
         if render_this:
             frames = []
         with grad_or_no_grad:
-            while count < config.max_eps_length and not terminated and not truncated:
+            while not terminated and not truncated:
                 a, stats = self.act(obs, deterministic=validation)
                 obs_prime, r, terminated, truncated, info = ocp_env.step(a)
                 if render_this:
@@ -183,7 +173,6 @@ class Trainer(ABC):
                 self.replay_buffer.put((obs, a, r, obs_prime, terminated))  # type:ignore
                 score += r  # type: ignore
                 obs = obs_prime
-                count += 1
         if validation:
             self.total_validation_rollouts += 1
         else:
@@ -195,7 +184,9 @@ class Trainer(ABC):
             save_video(
                 frames,
                 video_folder=config.video_directory_path,  # type:ignore
+                episode_trigger=lambda x: True,
                 name_prefix=video_name,
+                episode_index=episode_index,
                 fps=ocp_env.metadata["render_fps"],
             )
         return dict(score=score)
@@ -245,14 +236,14 @@ class Trainer(ABC):
                     if avg_val_score > max_val_score:
                         save_directory_for_models = os.path.join(
                             config.save_directory_path,
-                            "val_score_" + str(avg_val_score),
+                            "val_score_"
+                            + str(avg_val_score)
+                            + "_episode_"
+                            + str(n_epi),
                         )
                         create_dir_if_not_exists(save_directory_for_models)
                         max_val_score = avg_val_score
                         self.save(save_directory_for_models)
-                    if self.goal_reached(max_val_score):
-                        # terminate training
-                        break
             if n_epi % config.save_interval == 0:
                 save_directory_for_models = os.path.join(
                     config.save_directory_path, "episode_" + str(n_epi)
@@ -260,4 +251,4 @@ class Trainer(ABC):
                 create_dir_if_not_exists(save_directory_for_models)
                 self.save(save_directory_for_models)
         ocp_env.close()
-        return avg_val_score  # Return last validation score for testing purposes
+        return max_val_score  # Return last validation score for testing purposes

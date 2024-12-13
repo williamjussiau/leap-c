@@ -5,6 +5,7 @@ import numpy as np
 import pygame
 from acados_template import AcadosModel, AcadosOcp
 from casadi.tools import struct_symSX
+from gymnasium.spaces import Box
 from pygame import gfxdraw
 
 from seal.examples.render_utils import draw_arrow
@@ -21,6 +22,9 @@ class PendulumOnCartMPC(MPC):
         self,
         params: dict[str, np.ndarray] | None = None,
         learnable_params: list[str] | None = None,
+        N_horizon: int = 20,
+        T_horizon: float = 1.0,
+        Fmax: float = 80.0,
         discount_factor: float = 0.99,
         n_batch: int = 1,
     ):
@@ -35,7 +39,11 @@ class PendulumOnCartMPC(MPC):
             }
 
         ocp = export_parametric_ocp(
-            nominal_param=params, learnable_param=learnable_params
+            nominal_param=params,
+            learnable_param=learnable_params,
+            N_horizon=N_horizon,
+            tf=T_horizon,
+            Fmax=Fmax,
         )
         configure_ocp_solver(ocp)
 
@@ -53,6 +61,7 @@ class PendulumOnCartOcpEnv(OCPEnv):
         mpc: PendulumOnCartMPC,
         dt: float = 0.1,
         max_time: float = 10.0,
+        noise_magnitude: float = 0.1,
         render_mode: str | None = None,
     ):
         super().__init__(
@@ -60,6 +69,12 @@ class PendulumOnCartOcpEnv(OCPEnv):
             dt=dt,
             max_time=max_time,
         )
+        low = self.state_space.low
+        high = self.state_space.high
+        low[1] = -2 * np.pi
+        high[1] = 2 * np.pi
+        self.state_space = Box(low=low, high=high, dtype=self.state_space.dtype)  # type:ignore
+        self.noise_mag = noise_magnitude
 
         # For rendering
         if not (render_mode is None or render_mode in self.metadata["render_modes"]):
@@ -87,13 +102,20 @@ class PendulumOnCartOcpEnv(OCPEnv):
         info["frame"] = frame
         state = o[0].copy()
         state[2] += self.current_noise
+        theta = state[1]
+        if theta > 2 * np.pi:
+            theta -= 2 * np.pi
+        elif theta < -2 * np.pi:
+            theta += 2 * np.pi
+        state[1] = theta
         self.x = state
         self.current_noise = self.next_noise()
         o = (state, o[1])
 
+        info["mpc_cost"] = -r
+        r = abs(np.pi - (abs(theta))) / (10 * np.pi)  # Reward for swingup; Max: 0.1
         if state not in self.state_space:
-            r -= 1e2
-            term = True
+            term = True  # Just terminating should be enough punishment when reward is positive
 
         return o, r, term, trunc, info
 
@@ -113,7 +135,7 @@ class PendulumOnCartOcpEnv(OCPEnv):
         """Return the next noise to be added to the state."""
         if self._np_random is None:
             raise ValueError("First, reset needs to be called with a seed.")
-        return self._np_random.uniform(-1, 0)
+        return self._np_random.uniform(-1 * self.noise_mag, 0)
 
     def include_this_state_trajectory_to_rendering(self, state_trajectory: np.ndarray):
         """Meant for setting a state trajectory for rendering.

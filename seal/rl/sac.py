@@ -389,8 +389,8 @@ class SACTrainer(Trainer):
             a_prime, log_prob = actor_fwd[0], actor_fwd[1]
             log_prob = log_prob.sum(dim=-1, keepdim=True)
             entropy = -self.actor.log_entropy_scaling.exp() * log_prob
-            q1_val, q1_stats = self.critic1(s_prime, a_prime)
-            q2_val, q2_stats = self.critic2(s_prime, a_prime)
+            q1_val, q1_stats = self.critic1_target(s_prime, a_prime)
+            q2_val, q2_stats = self.critic2_target(s_prime, a_prime)
             q1_q2 = torch.cat([q1_val, q2_val], dim=1)
             min_q = torch.min(q1_q2, 1, keepdim=True)[0]
             target = r + self.discount_factor * (1 - done) * (min_q + entropy)

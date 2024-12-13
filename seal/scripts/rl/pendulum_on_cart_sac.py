@@ -8,8 +8,9 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
+from gymnasium.wrappers import TransformAction
 
-from seal.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
+from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
 from seal.mpc import MPC, MPCParameter
 from seal.rl.replay_buffer import ReplayBuffer
 from seal.rl.sac import SACActor, SACConfig, SACQNet, SACTrainer
@@ -46,13 +47,14 @@ class Scenario(Enum):
 
 
 @dataclass(kw_only=True)
-class LinearSystemSACConfig(SACConfig):
+class PendulumOnCartSACConfig(SACConfig):
     # General
     name: str
 
     # env
     max_time: float
     dt: float
+    noise_magnitude: float
     a_dim: int | None  # NOTE: Will be inferred from env and is None until then
     s_dim: int | None  # NOTE: Will be inferred from env and is None until then
     p_learnable_dim: (
@@ -60,9 +62,11 @@ class LinearSystemSACConfig(SACConfig):
     )  # NOTE: Will be inferred from env and is None until then
     default_params: dict[str, np.ndarray]
     learnable_params: list[str]
+    Fmax: float
     # MPC-specific
     accept_n_nonconvergences_per_batch: int
     N_horizon: int
+    T_horizon: float
 
     # Networks, i.e., mlps
     hidden_dims: list[int]
@@ -73,7 +77,7 @@ class LinearSystemSACConfig(SACConfig):
     dtype_buffer: torch.dtype
 
 
-def create_qnet(config: LinearSystemSACConfig) -> SACQNet:
+def create_qnet(config: PendulumOnCartSACConfig) -> SACQNet:
     if config.s_dim is None or config.a_dim is None:
         raise ValueError("s_dim and a_dim must be set before creating the qnet.")
     s_embed = StateEmbed(config.s_dim, config.q_embed_size, config.activation)
@@ -94,7 +98,7 @@ def create_qnet(config: LinearSystemSACConfig) -> SACQNet:
 
 
 def create_actor(
-    config: LinearSystemSACConfig, scenario: Scenario, mpc: MPC
+    config: PendulumOnCartSACConfig, scenario: Scenario, mpc: MPC
 ) -> SACActor:
     if config.s_dim is None or config.a_dim is None or config.target_entropy is None:
         raise ValueError(
@@ -152,7 +156,7 @@ def create_actor(
         )
 
 
-def create_replay_buffer(config: LinearSystemSACConfig) -> ReplayBuffer:
+def create_replay_buffer(config: PendulumOnCartSACConfig) -> ReplayBuffer:
     return ReplayBuffer(
         buffer_limit=config.replay_buffer_size,
         device=config.device,
@@ -161,18 +165,19 @@ def create_replay_buffer(config: LinearSystemSACConfig) -> ReplayBuffer:
 
 
 def create_mpc(
-    config: LinearSystemSACConfig,
-) -> LinearSystemMPC:
-    return LinearSystemMPC(
+    config: PendulumOnCartSACConfig,
+) -> PendulumOnCartMPC:
+    return PendulumOnCartMPC(
         params=config.default_params,
         learnable_params=config.learnable_params,
         discount_factor=config.discount_factor,
         n_batch=config.batch_size,
         N_horizon=config.N_horizon,
+        T_horizon=config.T_horizon,
     )
 
 
-class LinearSystemSACTrainer(SACTrainer):
+class PendulumOnCartSACTrainer(SACTrainer):
     def __init__(
         self,
         actor,
@@ -237,8 +242,8 @@ def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> di
         init_entropy_scaling=0.01,
         target_entropy=None,  # NOTE: target_entropy = -a_dim will be inferred from env, but only when still set as None
         minimal_std=1e-3,  # Will be used in every TanhNormal to avoid collapse of the distribution
-        param_factor=np.array([1.0, 1.0], dtype=np.float32),  # Only in Actor with MPC
-        param_shift=np.array([0, 0], dtype=np.float32),  # Only in Actor with MPC
+        param_factor=np.array([1.0], dtype=np.float32),  # Only in Actor with MPC
+        param_shift=np.array([0], dtype=np.float32),  # Only in Actor with MPC
         # Critic
         soft_update_factor=1e-2,
         soft_update_frequency=1,
@@ -247,24 +252,27 @@ def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> di
         video_directory_path=None,
         render_interval_exploration=50,
         render_interval_validation=5,
+        noise_magnitude=0.0001,
         max_time=10.0,
-        dt=0.1,
+        dt=0.05,  # NOTE: This is 1/20, i.e., if N_horizon=20 and T_horizon=1.0, then
+        # one Node on the horizon of the MPC equals the same time as one step.
         a_dim=None,  # NOTE: a_dim  Will be inferred from env
         s_dim=None,  # NOTE: s_dim  Will be inferred from env
         p_learnable_dim=None,  # NOTE: p_learnable_dim Will be inferred from env
         default_params={
-            "A": np.array([[1.0, 0.25], [0.0, 1.0]]),
-            "B": np.array([[0.03125], [0.25]]),
-            "Q": np.identity(2),
-            "R": np.identity(1),
-            "b": np.array([[0.0], [0.0]]),
-            "f": np.array([[0.0], [0.0], [0.0]]),
-            "V_0": np.array([1e-3]),
+            "M": np.array([1.0]),  # mass of the cart [kg]
+            "m": np.array([0.1]),  # mass of the ball [kg]
+            "g": np.array([9.81]),  # gravity constant [m/s^2]
+            "l": np.array([0.8]),  # length of the rod [m]
+            "Q": np.diag([2e3, 2e3, 1e-2, 1e-2]),  # state cost
+            "R": np.diag([2e-1]),  # control cost
         },
-        learnable_params=["b"],
+        learnable_params=["M"],
+        Fmax=80.0,
         # MPC-specific
         accept_n_nonconvergences_per_batch=0,
         N_horizon=20,
+        T_horizon=1.0,
         # Networks
         q_embed_size=64,  # should be half of hidden size
         hidden_dims=[128, 128],
@@ -272,10 +280,10 @@ def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> di
     )
 
 
-def run_linear_system_sac(
+def run_pendulum_on_cart_sac(
     scenario: Scenario, savefile_directory_path: str, config_kwargs: dict
 ) -> float:
-    """Run SAC on the linear system environment.
+    """Run SAC on the pendulum on cart environment.
     Parameters:
         scenario: The scenario to run.
         savefile_directory_path: The path to the directory where the models (networks) will be saved.
@@ -287,10 +295,14 @@ def run_linear_system_sac(
     standard_config = standard_config_dict(
         scenario, savefile_directory_path=savefile_directory_path
     )
-    config = LinearSystemSACConfig(**{**standard_config, **config_kwargs})
+    config = PendulumOnCartSACConfig(**{**standard_config, **config_kwargs})
     mpc = create_mpc(config)
-    env = LinearSystemOcpEnv(
-        mpc, dt=config.dt, max_time=config.max_time, render_mode=config.render_mode
+    env = PendulumOnCartOcpEnv(
+        mpc,
+        dt=config.dt,
+        max_time=config.max_time,
+        noise_magnitude=config.noise_magnitude,
+        render_mode=config.render_mode,
     )
     config.p_learnable_dim = env.p_learnable_space.shape[0]  # type:ignore
 
@@ -302,6 +314,7 @@ def run_linear_system_sac(
     config.target_entropy = (
         -a_dim if config.target_entropy is None else config.target_entropy
     )
+
     actor = create_actor(config, scenario, mpc)
 
     if not config.q_embed_size * 2 == config.hidden_dims[0]:
@@ -311,7 +324,7 @@ def run_linear_system_sac(
     critic1_target = create_qnet(config)
     critic2_target = create_qnet(config)
     buffer = create_replay_buffer(config)
-    trainer = LinearSystemSACTrainer(
+    trainer = PendulumOnCartSACTrainer(
         actor=actor,
         critic1=critic1,
         critic2=critic2,
@@ -323,7 +336,10 @@ def run_linear_system_sac(
     if config.render_mode is not None:
         config.video_directory_path = os.path.join(savefile_directory_path, "videos")
 
-    return trainer.training_loop(env, config)
+    env_action_scaling = TransformAction(
+        env, lambda a: a * config.Fmax, env.action_space
+    )
+    return trainer.training_loop(env_action_scaling, config)
 
 
 if __name__ == "__main__":
@@ -337,7 +353,9 @@ if __name__ == "__main__":
 
     savefile_directory_path = os.path.join(os.getcwd(), "output")
     create_dir_if_not_exists(savefile_directory_path)
-    savefile_directory_path = os.path.join(savefile_directory_path, "linear_system_sac")
+    savefile_directory_path = os.path.join(
+        savefile_directory_path, "pendulum_on_cart_sac"
+    )
     create_dir_if_not_exists(savefile_directory_path)
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
     savefile_directory_path = os.path.join(
@@ -346,9 +364,9 @@ if __name__ == "__main__":
     video_path = os.path.join(savefile_directory_path, "videos")
     create_dir_if_not_exists(savefile_directory_path)
 
-    max_val = run_linear_system_sac(
+    max_val = run_pendulum_on_cart_sac(
         scenario,
         savefile_directory_path,
-        dict(device=device, seed=seed, max_episodes=500, render_mode="rgb_array"),
+        dict(device=device, seed=seed, max_episodes=10000, render_mode="rgb_array"),
     )
     print("Max validation score: ", max_val)

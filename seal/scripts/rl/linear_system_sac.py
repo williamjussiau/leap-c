@@ -13,13 +13,12 @@ from seal.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
 from seal.mpc import MPC, MPCParameter
 from seal.rl.replay_buffer import ReplayBuffer
 from seal.rl.sac import (
-    NumberLogger,
     SACActor,
     SACConfig,
     SACQNet,
     SACTrainer,
-    WandbLogger,
 )
+from seal.logging import NumberLogger, WandbLogger
 from seal.torch_modules import (
     FOUMPCNetwork,
     MeanStdMLP,
@@ -30,6 +29,7 @@ from seal.torch_modules import (
 from seal.util import create_dir_if_not_exists, tensor_to_numpy
 
 
+# TODO: Move to shared location probably to torch modules.
 class LinearWithActivation(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, activation: str):
         super().__init__()
@@ -58,6 +58,7 @@ class LinearSystemSACConfig(SACConfig):
     name: str
 
     # env
+    # TODO: this should probably be not changed and removed)
     max_time: float
     dt: float
     a_dim: int | None  # NOTE: Will be inferred from env and is None until then
@@ -76,11 +77,6 @@ class LinearSystemSACConfig(SACConfig):
     q_embed_size: int  # should be half of hidden size
     activation: str
     log_tensors_bit_by_bit: bool
-
-    # Buffer
-    dtype_buffer: torch.dtype
-
-    dict = asdict
 
 
 def create_qnet(config: LinearSystemSACConfig) -> SACQNet:
@@ -169,7 +165,6 @@ def create_replay_buffer(config: LinearSystemSACConfig) -> ReplayBuffer:
     return ReplayBuffer(
         buffer_limit=config.replay_buffer_size,
         device=config.device,
-        obs_dtype=config.dtype_buffer,
     )
 
 
@@ -186,28 +181,8 @@ def create_mpc(
 
 
 class LinearSystemSACTrainer(SACTrainer):
-    def __init__(
-        self,
-        actor,
-        critic1,
-        critic2,
-        critic1_target,
-        critic2_target,
-        replay_buffer,
-        logger,
-        config,
-    ):
-        super().__init__(
-            actor=actor,
-            critic1=critic1,
-            critic2=critic2,
-            critic1_target=critic1_target,
-            critic2_target=critic2_target,
-            replay_buffer=replay_buffer,
-            logger=logger,
-            config=config,
-        )
 
+    # TODO: Could we put the code somewhere without subclassing?
     def act(
         self, obs: tuple[np.ndarray, MPCParameter], deterministic: bool = False
     ) -> tuple[np.ndarray, dict[str, Any]]:
@@ -247,7 +222,6 @@ def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> di
         batch_size=64,
         # Replay Buffer
         replay_buffer_size=10000,
-        dtype_buffer=torch.float32,
         # Actor
         init_entropy_scaling=0.01,
         target_entropy=None,  # NOTE: target_entropy = -a_dim will be inferred from env, but only when still set as None
@@ -341,7 +315,7 @@ def run_linear_system_sac(
             config.save_frequency,
             config.moving_average_width,
         )
-        wandb_init_kwargs["config"] = config.dict()
+        wandb_init_kwargs["config"] = asdict(config)
         project_name = wandb_init_kwargs.pop("project_name")
         run_name = wandb_init_kwargs.pop("run_name")
         mode = wandb_init_kwargs.pop("mode")
@@ -372,7 +346,7 @@ def run_linear_system_sac(
 
 if __name__ == "__main__":
     scenario = Scenario.STANDARD_SAC
-    device = "cuda:5"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     seed = 1337
 
     torch.manual_seed(seed)
@@ -391,13 +365,14 @@ if __name__ == "__main__":
     create_dir_if_not_exists(savefile_directory_path)
 
     # NOTE: You can uncomment this and use it in run_linear_system_sac, if you want to use the Wandblogger.
-    # wandb_init_kwargs = dict(
-    #     project_name="Leap-C", run_name="test", mode="online", tags=["test"]
-    # )
+    wandb_init_kwargs = dict(
+        project_name="Leap-C", run_name="test", mode="online", tags=["test"]
+    )
 
     max_val = run_linear_system_sac(
         scenario,
         savefile_directory_path,
         dict(device=device, seed=seed, max_episodes=500, render_mode="rgb_array"),
+        wandb_init_kwargs=wandb_init_kwargs,
     )
     print("Max validation score: ", max_val)

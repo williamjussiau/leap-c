@@ -114,8 +114,11 @@ class AcadosFileManager:
         return solver
 
     def __del__(self):
-        if self.cleanup:
-            shutil.rmtree(self.export_directory, ignore_errors=True)
+        # TODO: Update this to make it safe for users.
+        pass
+
+        # if self.cleanup:
+        #     shutil.rmtree(self.export_directory, ignore_errors=True)
 
 
 def add_prefix_extend(prefix: str, extended: dict, extending: dict) -> None:

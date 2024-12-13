@@ -10,7 +10,7 @@ from seal.mpc import MPCParameter
 
 
 class ReplayBuffer:
-    def __init__(self, buffer_limit: int, device: str, obs_dtype: torch.dtype):
+    def __init__(self, buffer_limit: int, device: str, obs_dtype: torch.dtype = torch.float32):
         """
         Args:
             buffer_limit: The maximum number of transitions that can be stored in the buffer.

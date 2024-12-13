@@ -1044,57 +1044,57 @@ class MPC(ABC):
         return self._cost_fn(*inputs).full().item()  # type: ignore
 
 
-def sequential_batch_solve(
-    mpc: MPC,
-    mpc_input: MPCInput,
-    mpc_state_given: list[MPCState] | None = None,
-    dudx: bool = False,
-    dudp: bool = False,
-    dvdx: bool = False,
-    dvdu: bool = False,
-    dvdp: bool = False,
-    use_adj_sens: bool = True,
-) -> tuple[MPCOutput, list[MPCState]]:
-    """Perform one solve after another for every sample of the batch (contrary to the parallelized batch_solve of the mpc class).
-    Useful for debugging and timing.
-    """
-
-    def get_idx(data, index):
-        if isinstance(data, tuple) and hasattr(data, "_fields"):  # namedtuple
-            elem_type = type(data)
-            return elem_type(*(get_idx(elem, index) for elem in data))  # type: ignore
-
-        return None if data is None else data[index]
-
-    batch_size = mpc_input.x0.shape[0]
-    outputs = []
-    states = []
-
-    for idx in range(batch_size):
-        mpc_output, mpc_state = mpc._solve(
-            mpc_input=mpc_input.get_sample(idx),
-            mpc_state=mpc_state_given[idx] if mpc_state_given is not None else None,
-            dudx=dudx,
-            dudp=dudp,
-            dvdp=dvdp,
-            dvdx=dvdx,
-            dvdu=dvdu,
-            use_adj_sens=use_adj_sens,
-        )
-
-        outputs.append(mpc_output)
-        states.append(mpc_state)
-
-    def collate(key):
-        value = getattr(outputs[0], key)
-        if value is None:
-            return value
-        return np.stack([getattr(output, key) for output in outputs])
-
-    fields = {key: collate(key) for key in MPCOutput._fields}
-    fields["status"] = fields["status"].squeeze()
-    fields["V"] = fields["V"].squeeze() if fields["V"] is not None else None
-    fields["Q"] = fields["Q"].squeeze() if fields["Q"] is not None else None
-    mpc_output = MPCOutput(**fields)  # type: ignore
-
-    return mpc_output, states  # type: ignore
+# def sequential_batch_solve(
+#     mpc: MPC,
+#     mpc_input: MPCInput,
+#     mpc_state_given: list[MPCState] | None = None,
+#     dudx: bool = False,
+#     dudp: bool = False,
+#     dvdx: bool = False,
+#     dvdu: bool = False,
+#     dvdp: bool = False,
+#     use_adj_sens: bool = True,
+# ) -> tuple[MPCOutput, list[MPCState]]:
+#     """Perform one solve after another for every sample of the batch (contrary to the parallelized batch_solve of the mpc class).
+#     Useful for debugging and timing.
+#     """
+# 
+#     def get_idx(data, index):
+#         if isinstance(data, tuple) and hasattr(data, "_fields"):  # namedtuple
+#             elem_type = type(data)
+#             return elem_type(*(get_idx(elem, index) for elem in data))  # type: ignore
+# 
+#         return None if data is None else data[index]
+# 
+#     batch_size = mpc_input.x0.shape[0]
+#     outputs = []
+#     states = []
+# 
+#     for idx in range(batch_size):
+#         mpc_output, mpc_state = mpc._solve(
+#             mpc_input=mpc_input.get_sample(idx),
+#             mpc_state=mpc_state_given[idx] if mpc_state_given is not None else None,
+#             dudx=dudx,
+#             dudp=dudp,
+#             dvdp=dvdp,
+#             dvdx=dvdx,
+#             dvdu=dvdu,
+#             use_adj_sens=use_adj_sens,
+#         )
+# 
+#         outputs.append(mpc_output)
+#         states.append(mpc_state)
+# 
+#     def collate(key):
+#         value = getattr(outputs[0], key)
+#         if value is None:
+#             return value
+#         return np.stack([getattr(output, key) for output in outputs])
+# 
+#     fields = {key: collate(key) for key in MPCOutput._fields}
+#     fields["status"] = fields["status"].squeeze()
+#     fields["V"] = fields["V"].squeeze() if fields["V"] is not None else None
+#     fields["Q"] = fields["Q"].squeeze() if fields["Q"] is not None else None
+#     mpc_output = MPCOutput(**fields)  # type: ignore
+# 
+#     return mpc_output, states  # type: ignore

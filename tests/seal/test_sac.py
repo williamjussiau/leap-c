@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from seal.examples.linear_system import LinearSystemOcpEnv
-from seal.rl.sac import NumberLogger
+from seal.logging import NumberLogger
 from seal.scripts.rl.linear_system_sac import (
     LinearSystemSACConfig,
     LinearSystemSACTrainer,

@@ -14,12 +14,10 @@ from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpE
 from seal.mpc import MPC, MPCParameter
 from seal.rl.replay_buffer import ReplayBuffer
 from seal.rl.sac import (
-    NumberLogger,
     SACActor,
     SACConfig,
     SACQNet,
     SACTrainer,
-    WandbLogger,
 )
 from seal.torch_modules import (
     FOUMPCNetwork,
@@ -29,7 +27,7 @@ from seal.torch_modules import (
     string_to_activation,
 )
 from seal.util import create_dir_if_not_exists, tensor_to_numpy
-
+from seal.logging import NumberLogger, WandbLogger
 
 class LinearWithActivation(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, activation: str):
@@ -79,9 +77,6 @@ class PendulumOnCartSACConfig(SACConfig):
     hidden_dims: list[int]
     q_embed_size: int  # should be half of hidden size
     activation: str
-
-    # Buffer
-    dtype_buffer: torch.dtype
 
     dict = asdict
 
@@ -169,7 +164,6 @@ def create_replay_buffer(config: PendulumOnCartSACConfig) -> ReplayBuffer:
     return ReplayBuffer(
         buffer_limit=config.replay_buffer_size,
         device=config.device,
-        obs_dtype=config.dtype_buffer,
     )
 
 
@@ -384,7 +378,7 @@ def run_pendulum_on_cart_sac(
 
 if __name__ == "__main__":
     scenario = Scenario.STANDARD_SAC
-    device = "cuda:5"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     seed = 1337
 
     torch.manual_seed(seed)

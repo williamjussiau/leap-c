@@ -6,6 +6,7 @@ from torch.distributions import Normal
 
 from seal.mpc import MPC, MPCParameter, MPCState
 from seal.nn.modules import MPCSolutionModule
+from seal.util import put_each_index_of_tensor_as_entry_into
 
 
 def string_to_activation(activation: str) -> nn.Module:
@@ -92,19 +93,22 @@ class TanhNormal(nn.Module):
     def __init__(
         self,
         minimal_std: float = 1e-3,
+        log_tensors: bool = False,
         **kwargs,
     ):
         """
         Parameters:
             minimal_std: The minimal standard deviation of the distribution.
                 Will always be added to the softplus of the std to form the actual std.
+            log_tensors: Whether to log EVERY INDEX ONE FOR ONE (but still meaned over batch dimensions) of the mean and std tensors in the stats dict.
         """
         super().__init__(**kwargs)
         self.minimal_std = minimal_std
+        self.log_tensors = log_tensors
 
     def forward(
         self, mean: torch.Tensor, std: torch.Tensor, deterministic: bool = False
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """
         Parameters:
             mean: The mean of the distribution.
@@ -117,7 +121,17 @@ class TanhNormal(nn.Module):
         """
         stats = dict()
         std = F.softplus(std) + self.minimal_std
-        stats["std"] = std
+
+        if self.log_tensors:
+            batch_dims = tuple(range(mean.ndim - 1))
+            if len(batch_dims) > 0:
+                log_mean = mean.mean(dim=batch_dims)
+                log_std = std.mean(dim=batch_dims)
+            else:
+                log_mean = mean
+                log_std = std
+            put_each_index_of_tensor_as_entry_into(stats, log_mean, "mean")
+            put_each_index_of_tensor_as_entry_into(stats, log_std, "std")
 
         if deterministic:
             action = mean
@@ -130,24 +144,31 @@ class TanhNormal(nn.Module):
         real_action = torch.tanh(action)
         real_log_prob = log_prob - torch.log(1 - torch.tanh(action).pow(2) + 1e-7)
 
-        return real_action, real_log_prob
+        return real_action, real_log_prob, stats
 
 
-class TanhNormalNetwork(nn.Module):
-    """Uses a Network to predict the mean and standard deviation of a TanhNormal distribution."""
+class TanhNormalActionNetwork(nn.Module):
+    """Uses a Network to predict the mean and standard deviation of a TanhNormal distribution representing a distribution over actions."""
 
     def __init__(
         self,
         mean_std_module: nn.Module,
         minimal_std: float = 1e-3,
+        log_tensors: bool = False,
     ):
+        """
+        Parameters:
+            minimal_std: The minimal standard deviation of the distribution.
+                Will always be added to the softplus of the std to form the actual std.
+            log_tensors: Whether to log EVERY INDEX ONE FOR ONE (but still meaned over batch dimensions) of the mean and std tensors in the stats dict.
+        """
         super().__init__()
         self.mean_std_module = mean_std_module
-        self.tanh_normal = TanhNormal(minimal_std=minimal_std)
+        self.tanh_normal = TanhNormal(minimal_std=minimal_std, log_tensors=log_tensors)
 
     def forward(
         self, obs: tuple[torch.Tensor, MPCParameter], deterministic: bool = False
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, dict]:
         """
         Parameters:
             obs: The input to the mean/std model.
@@ -158,7 +179,13 @@ class TanhNormalNetwork(nn.Module):
             and a statistics dict containing the standard deviation.
         """
         mean, std = self.mean_std_module(obs)
-        return self.tanh_normal(mean, std, deterministic=deterministic)
+        action, log_prob, stats = self.tanh_normal(
+            mean, std, deterministic=deterministic
+        )
+        log_prob = log_prob.sum(
+            -1, keepdims=True
+        )  # NOTE: This assumes that everything before the last dimension is a batch dimension.
+        return action, log_prob, stats
 
 
 class MeanStdMLP(nn.Module):
@@ -203,6 +230,7 @@ class FOUMPCNetwork(nn.Module):
         param_factor: np.ndarray,
         param_shift: np.ndarray,
         minimal_std: float = 1e-3,
+        log_tensors: bool = False,
     ):
         """
         Parameters:
@@ -212,12 +240,13 @@ class FOUMPCNetwork(nn.Module):
             param_factor: A factor to scale the parameters, before putting them into the MPC.
             param_shift: A shift to add to the scaled parameters, before putting them into the MPC.
             minimal_std: The minimal standard deviation of the action distribution.
+            log_tensors: Whether to log EVERY INDEX ONE FOR ONE (but still meaned over batch dimensions) of the mean, std and parameters tensors in the stats dict.
         """
         super().__init__()
         self.param_mean_action_std_model = param_mean_action_std_model
 
         self.mpc_layer = MPCSolutionModule(mpc)
-        self.tanh_normal = TanhNormal(minimal_std=minimal_std)
+        self.tanh_normal = TanhNormal(minimal_std=minimal_std, log_tensors=False)
 
         if not param_factor.shape == param_shift.shape:
             raise ValueError("param_scaling and param_shift must have the same shape.")
@@ -226,6 +255,7 @@ class FOUMPCNetwork(nn.Module):
             torch.tensor(param_factor), requires_grad=False
         )
         self.param_shift = nn.Parameter(torch.tensor(param_shift), requires_grad=False)
+        self.log_tensors = log_tensors
 
     def forward(
         self,
@@ -266,7 +296,6 @@ class FOUMPCNetwork(nn.Module):
         params_scaled = self.final_param_transform_before_mpc(
             params_unscaled, x, **param_transform_kwargs
         )
-        stats["params_input_to_mpc"] = params_scaled
 
         action_mean, _, mpc_status = self.mpc_layer(
             x,
@@ -274,12 +303,31 @@ class FOUMPCNetwork(nn.Module):
             p_stagewise=p_stagewise,
             initializations=mpc_initialization,
         )
-        stats["mean_from_mpc"] = action_mean
-        stats["std_from_net"] = action_std
+        if self.log_tensors:
+            batch_dims = tuple(
+                range(params_scaled.ndim - 1)
+            )  # Assumes only the last dimension is the actual param dimension.
+            if len(batch_dims) > 0:
+                log_params = params_scaled.mean(dim=batch_dims)
+                log_mean = action_mean.mean(dim=batch_dims)
+                log_std = action_std.mean(dim=batch_dims)
+            else:
+                log_params = params_scaled
+                log_mean = action_mean
+                log_std = action_std
+            put_each_index_of_tensor_as_entry_into(
+                stats, log_params, "params_input_to_mpc"
+            )
+            put_each_index_of_tensor_as_entry_into(stats, log_mean, "mean_from_mpc")
+            put_each_index_of_tensor_as_entry_into(stats, log_std, "std_from_net")
 
-        real_action, real_log_prob = self.tanh_normal(
+        real_action, real_log_prob, tanh_normal_stats = self.tanh_normal(
             action_mean, action_std, deterministic=deterministic
         )
+        real_log_prob = real_log_prob.sum(
+            -1, keepdims=True
+        )  # NOTE: This assumes that everything before the last dimension is a batch dimension.
+
         # NOTE: One could use a TruncatedNormal instead of a TanhNormal to retain the constraint satisfaction of the MPC at test-time (deterministic mode),
         # but this results in much more training needed, probably due to bad gradients?
         # We did not check if this is also a problem if we just use a "differentiable clamp" in the manner described below to clamp the Normal distribution.

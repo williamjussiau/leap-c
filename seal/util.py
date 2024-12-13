@@ -3,8 +3,10 @@ import os
 import shutil
 from pathlib import Path
 from tempfile import mkdtemp
+from typing import Any
 
 import casadi as ca
+import numpy as np
 import torch
 from acados_template import AcadosOcp, AcadosOcpSolver, AcadosSim, AcadosSimSolver
 
@@ -25,6 +27,19 @@ def find_idx_for_labels(sub_vars: ca.SX, sub_label: str) -> list[int]:
 def create_dir_if_not_exists(directory):
     if not os.path.exists(directory):
         os.mkdir(directory)
+
+
+def collect_status(status: torch.Tensor) -> list:
+    """Count how many occurrences of the respective status number there are in the given tensor."""
+    return [(status == i).sum().item() for i in range(5)]
+
+
+def put_each_index_of_tensor_as_entry_into(
+    put_here: dict[str, Any], data: torch.Tensor | np.ndarray, name: str
+):
+    flat_data = data.reshape(-1)
+    for i, entry in enumerate(flat_data):
+        put_here[name + f"_{i}"] = entry.item()
 
 
 def tensor_to_numpy(tensor: torch.Tensor):
@@ -109,6 +124,6 @@ def add_prefix_extend(prefix: str, extended: dict, extending: dict) -> None:
     Raises a ValueError if a key that has been extended with a prefix is already in the extended dict.
     """
     for k, v in extending.items():
-        if extending.get(prefix + k) is not None:
+        if extended.get(prefix + k, None) is not None:
             raise ValueError(f"Key {prefix + k} already exists in the dictionary.")
         extended[prefix + k] = v

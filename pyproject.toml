@@ -28,7 +28,7 @@ test = ["pytest", "pygame", "moviepy"]
 rendering = ["pygame", "moviepy"]
 docs = ["sphinx", "sphinx_rtd_theme", "myst-parser"]
 dev = ["seal[rendering]", "seal[docs]", "seal[test]"]
-
+wandb = ["wandb"]
 
 [tool.setuptools]
 packages = ["seal"]

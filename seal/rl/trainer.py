@@ -11,7 +11,7 @@ from gymnasium import Env
 from gymnasium.utils.save_video import save_video
 
 from seal.rl.replay_buffer import ReplayBuffer
-from seal.util import create_dir_if_not_exists
+from seal.util import add_prefix_extend, create_dir_if_not_exists
 
 
 def very_crude_debug_memory_leak():
@@ -95,6 +95,17 @@ class Trainer(ABC):
         raise NotImplementedError()
 
     @abstractmethod
+    def log(self, stats: dict[str, Any], commit: bool):
+        """Log the given statistics as one step.
+        Parameters:
+            stats: A dictionary containing the statistics of the training step.
+            commit: Whether to commit the logged statistics to the current step.
+                Should be False when more statistics are to be added in a separate call.
+            save_directory: The directory where the logs should be saved.
+        """
+        raise NotImplementedError()
+
+    @abstractmethod
     def save(self, save_directory: str):
         """Save the models in the given directory."""
         raise NotImplementedError()
@@ -109,8 +120,9 @@ class Trainer(ABC):
         ocp_env: Env,
         n_val_rollouts: int,
         config: BaseTrainerConfig,
-    ):
-        """Do a deterministic validation run of the policy and return the mean of the cumulative reward over all validation episodes."""
+    ) -> float:
+        """Do a deterministic validation run of the policy and
+        return the mean of the cumulative reward over all validation episodes."""
         scores = []
         for _ in range(n_val_rollouts):
             info = self.episode_rollout(ocp_env, True, torch.no_grad(), config)
@@ -137,8 +149,10 @@ class Trainer(ABC):
             A dictionary containing information about the rollout, at containing the keys
 
             "score" for the cumulative score
+            "length" for the length of this episode (how many steps were taken until termination/truncation)
         """
         score = 0
+        count = 0
         obs, info = ocp_env.reset(seed=config.seed)
 
         terminated = False
@@ -173,6 +187,7 @@ class Trainer(ABC):
                 self.replay_buffer.put((obs, a, r, obs_prime, terminated))  # type:ignore
                 score += r  # type: ignore
                 obs = obs_prime
+                count += 1
         if validation:
             self.total_validation_rollouts += 1
         else:
@@ -189,7 +204,7 @@ class Trainer(ABC):
                 episode_index=episode_index,
                 fps=ocp_env.metadata["render_fps"],
             )
-        return dict(score=score)
+        return dict(score=score, length=count)
 
     def training_loop(
         self,
@@ -212,26 +227,27 @@ class Trainer(ABC):
         max_val_score = -np.inf
 
         for n_epi in range(config.max_episodes):
+            exploration_stats = dict()
             info = self.episode_rollout(ocp_env, False, grad_or_no_grad, config)
-            score = info["score"]
-            print("Episode rollout: ", n_epi, "Score: ", score)
+            add_prefix_extend("exploration_", exploration_stats, info)
             if (
                 self.replay_buffer.size()
                 > config.dont_train_until_this_many_transitions
             ):
+                self.log(exploration_stats, commit=False)
                 for i in range(config.training_steps_per_episode):
-                    self.train()
-                    print(f"Training step {i}")
+                    training_stats = self.train()
+                    self.log(training_stats, commit=True)
                 if config.crude_memory_debugging:
                     very_crude_debug_memory_leak()
 
                 if n_epi % config.val_interval == 0:
-                    # TODO Log this
                     avg_val_score = self.validate(
                         ocp_env=ocp_env,
                         n_val_rollouts=config.n_val_rollouts,
                         config=config,
                     )
+                    self.log({"val_score": avg_val_score}, commit=False)
                     print("avg_val_score: ", avg_val_score)
                     if avg_val_score > max_val_score:
                         save_directory_for_models = os.path.join(
@@ -244,6 +260,8 @@ class Trainer(ABC):
                         create_dir_if_not_exists(save_directory_for_models)
                         max_val_score = avg_val_score
                         self.save(save_directory_for_models)
+            else:
+                self.log(exploration_stats, commit=True)
             if n_epi % config.save_interval == 0:
                 save_directory_for_models = os.path.join(
                     config.save_directory_path, "episode_" + str(n_epi)

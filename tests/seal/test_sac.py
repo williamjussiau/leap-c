@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from seal.examples.linear_system import LinearSystemOcpEnv
+from seal.rl.sac import NumberLogger
 from seal.scripts.rl.linear_system_sac import (
     LinearSystemSACConfig,
     LinearSystemSACTrainer,
@@ -72,8 +73,13 @@ def test_standard_sac_does_it_run():
     qnet1_target = create_qnet(config)
     qnet2_target = create_qnet(config)
     buffer = create_replay_buffer(config)
+    logger = NumberLogger(
+        save_directory_path=savefile_dir_path,
+        save_frequency=1,
+        moving_average_width=2,
+    )
     trainer = LinearSystemSACTrainer(
-        actor, qnet1, qnet2, qnet1_target, qnet2_target, buffer, config
+        actor, qnet1, qnet2, qnet1_target, qnet2_target, buffer, logger, config
     )
     iwannaload = os.path.join(savefile_dir_path, "episode_0")
     trainer.load(iwannaload)  # Test running loading.
@@ -126,8 +132,13 @@ def test_fou_sac_does_it_run():
     qnet1_target = create_qnet(config)
     qnet2_target = create_qnet(config)
     buffer = create_replay_buffer(config)
+    logger = NumberLogger(
+        save_directory_path=savefile_dir_path,
+        save_frequency=1,
+        moving_average_width=2,
+    )
     trainer = LinearSystemSACTrainer(
-        actor, qnet1, qnet2, qnet1_target, qnet2_target, buffer, config
+        actor, qnet1, qnet2, qnet1_target, qnet2_target, buffer, logger, config
     )
     iwannaload = os.path.join(savefile_dir_path, "episode_0")
     trainer.load(iwannaload)  # Test running loading.

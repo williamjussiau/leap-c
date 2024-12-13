@@ -1,7 +1,7 @@
 import datetime
 import os
 import random
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any
 
@@ -13,11 +13,18 @@ from gymnasium.wrappers import TransformAction
 from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
 from seal.mpc import MPC, MPCParameter
 from seal.rl.replay_buffer import ReplayBuffer
-from seal.rl.sac import SACActor, SACConfig, SACQNet, SACTrainer
+from seal.rl.sac import (
+    NumberLogger,
+    SACActor,
+    SACConfig,
+    SACQNet,
+    SACTrainer,
+    WandbLogger,
+)
 from seal.torch_modules import (
     FOUMPCNetwork,
     MeanStdMLP,
-    TanhNormalNetwork,
+    TanhNormalActionNetwork,
     create_mlp,
     string_to_activation,
 )
@@ -76,6 +83,8 @@ class PendulumOnCartSACConfig(SACConfig):
     # Buffer
     dtype_buffer: torch.dtype
 
+    dict = asdict
+
 
 def create_qnet(config: PendulumOnCartSACConfig) -> SACQNet:
     if config.s_dim is None or config.a_dim is None:
@@ -113,7 +122,7 @@ def create_actor(
             hidden_dims=config.hidden_dims,
             activation=config.activation,
         )
-        actor_net = TanhNormalNetwork(
+        actor_net = TanhNormalActionNetwork(
             mean_std_module=mlp, minimal_std=config.minimal_std
         )
         return SACActor(
@@ -186,6 +195,7 @@ class PendulumOnCartSACTrainer(SACTrainer):
         critic1_target,
         critic2_target,
         replay_buffer,
+        logger,
         config,
     ):
         super().__init__(
@@ -195,6 +205,7 @@ class PendulumOnCartSACTrainer(SACTrainer):
             critic1_target=critic1_target,
             critic2_target=critic2_target,
             replay_buffer=replay_buffer,
+            logger=logger,
             config=config,
         )
 
@@ -277,17 +288,25 @@ def standard_config_dict(scenario: Scenario, savefile_directory_path: str) -> di
         q_embed_size=64,  # should be half of hidden size
         hidden_dims=[128, 128],
         activation="leaky_relu",
+        # Logging
+        save_frequency=20,
+        moving_average_width=20,
     )
 
 
 def run_pendulum_on_cart_sac(
-    scenario: Scenario, savefile_directory_path: str, config_kwargs: dict
+    scenario: Scenario,
+    savefile_directory_path: str,
+    config_kwargs: dict,
+    wandb_init_kwargs: dict | None = None,
 ) -> float:
     """Run SAC on the pendulum on cart environment.
     Parameters:
         scenario: The scenario to run.
         savefile_directory_path: The path to the directory where the models (networks) will be saved.
         config_kwargs: Kwargs that should be overwritten in the config.
+        wandb_init_kwargs: Will use the wandb logger and initialize with these kwargs
+            and the final config, if not None. NEEDS to contain project_name, run_name and mode.
     Returns:
         The last validation performance for testing purposes.
     """
@@ -324,6 +343,26 @@ def run_pendulum_on_cart_sac(
     critic1_target = create_qnet(config)
     critic2_target = create_qnet(config)
     buffer = create_replay_buffer(config)
+    if wandb_init_kwargs is not None:
+        logger = WandbLogger(
+            config.save_directory_path,
+            config.save_frequency,
+            config.moving_average_width,
+        )
+        wandb_init_kwargs["config"] = config.dict()
+        project_name = wandb_init_kwargs.pop("project_name")
+        run_name = wandb_init_kwargs.pop("run_name")
+        mode = wandb_init_kwargs.pop("mode")
+        logger.init(
+            project_name=project_name, run_name=run_name, mode=mode, **wandb_init_kwargs
+        )
+    else:
+        logger = NumberLogger(
+            config.save_directory_path,
+            config.save_frequency,
+            config.moving_average_width,
+        )
+
     trainer = PendulumOnCartSACTrainer(
         actor=actor,
         critic1=critic1,
@@ -331,6 +370,7 @@ def run_pendulum_on_cart_sac(
         critic1_target=critic1_target,
         critic2_target=critic2_target,
         replay_buffer=buffer,
+        logger=logger,
         config=config,
     )
     if config.render_mode is not None:
@@ -343,7 +383,7 @@ def run_pendulum_on_cart_sac(
 
 
 if __name__ == "__main__":
-    scenario = Scenario.FO_U_SAC
+    scenario = Scenario.STANDARD_SAC
     device = "cuda:5"
     seed = 1337
 
@@ -364,9 +404,16 @@ if __name__ == "__main__":
     video_path = os.path.join(savefile_directory_path, "videos")
     create_dir_if_not_exists(savefile_directory_path)
 
+    wandb_init_kwargs = None
+    # NOTE: You can uncomment this and use it in run_linear_system_sac, if you want to use the Wandblogger.
+    # wandb_init_kwargs = dict(
+    #     project_name="Leap-C", run_name="test", mode="online", tags=["test"]
+    # )
+
     max_val = run_pendulum_on_cart_sac(
         scenario,
         savefile_directory_path,
         dict(device=device, seed=seed, max_episodes=10000, render_mode="rgb_array"),
+        wandb_init_kwargs=wandb_init_kwargs,
     )
     print("Max validation score: ", max_val)

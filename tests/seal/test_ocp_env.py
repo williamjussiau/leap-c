@@ -40,13 +40,14 @@ def test_env_step(all_ocp_env: list[OCPEnv]):
     3. Repeats the process
     4. Compares the state outputs to ensure they are identical
     """
+
     for env in all_ocp_env:
         env.reset(seed=0)
-        action = np.array([0])
+        action = np.zeros(env.action_space.shape)
         (x_next, p_next), _, _, _, _ = env.step(action)
 
         env.reset(seed=0)
-        action = np.array([0])
+        action = np.zeros(env.action_space.shape)
         (x_next_, p_next_), _, _, _, _ = env.step(action)
 
         assert np.allclose(x_next, x_next_)

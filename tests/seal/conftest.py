@@ -3,6 +3,7 @@ import pytest
 
 from seal.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
 from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
+from seal.examples.point_mass import PointMassMPC, PointMassOcpEnv
 
 
 def generate_batch_variation(
@@ -68,6 +69,12 @@ def linear_mpc():
 
 
 @pytest.fixture(scope="session")
+def point_mass_mpc():
+    """Fixture for the point mass MPC."""
+    return PointMassMPC()
+
+
+@pytest.fixture(scope="session")
 def pendulum_on_cart_mpc() -> PendulumOnCartMPC:
     """Fixture for the pendulum on cart MPC."""
     return PendulumOnCartMPC()
@@ -87,8 +94,19 @@ def learnable_linear_mpc(n_batch: int) -> LinearSystemMPC:
 
 
 @pytest.fixture(scope="session")
+def learnable_point_mass_mpc(n_batch: int) -> PointMassMPC:
+    """Fixture for the linear system MPC with learnable parameters."""
+    return PointMassMPC(learnable_params=["m", "c"], n_batch=n_batch)
+
+
+@pytest.fixture(scope="session")
 def linear_system_ocp_env(learnable_linear_mpc: LinearSystemMPC) -> LinearSystemOcpEnv:
     return LinearSystemOcpEnv(learnable_linear_mpc, render_mode="rgb_array")
+
+
+@pytest.fixture(scope="session")
+def point_mass_ocp_env(learnable_point_mass_mpc: PointMassMPC) -> PointMassOcpEnv:
+    return PointMassOcpEnv(learnable_point_mass_mpc)
 
 
 @pytest.fixture(scope="session")
@@ -118,8 +136,9 @@ def pendulum_on_cart_ocp_env(
 def all_ocp_env(
     linear_system_ocp_env: LinearSystemOcpEnv,
     pendulum_on_cart_ocp_env: PendulumOnCartOcpEnv,
+    point_mass_ocp_env: PointMassOcpEnv,
 ):
-    return [linear_system_ocp_env, pendulum_on_cart_ocp_env]
+    return [linear_system_ocp_env, pendulum_on_cart_ocp_env, point_mass_ocp_env]
 
 
 @pytest.fixture(scope="session")

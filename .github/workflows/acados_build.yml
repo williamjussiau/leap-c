@@ -14,10 +14,10 @@ jobs:
 
     steps:
 
-    - name: Checkout seal
+    - name: Checkout leap-c
       uses: actions/checkout@v4
       with:
-        path: ${{github.workspace}}/seal
+        path: ${{github.workspace}}/leap_c
 
     - name: Checkout acados
       uses: actions/checkout@v4
@@ -107,8 +107,8 @@ jobs:
       shell: bash
       run: ${{github.workspace}}/acados/.github/linux/install_tera.sh
 
-    - name: Install seal
-      working-directory: ${{github.workspace}}/seal
+    - name: Install leap-c
+      working-directory: ${{github.workspace}}/leap_c
       run: |
         python -m pip install --upgrade pip
         pip install -e .[test] 
@@ -128,8 +128,8 @@ jobs:
       run: |
         python examples/acados_python/getting_started/minimal_example_ocp.py
 
-    - name: Run seal tests
-      working-directory: ${{github.workspace}}/seal
+    - name: Run leap-c tests
+      working-directory: ${{github.workspace}}/leap_c
       run: |
         pytest 
 

@@ -6,11 +6,13 @@ import numpy as np
 import torch
 from torch.utils.data._utils.collate import collate, default_collate_fn_map
 
-from seal.mpc import MPCParameter
+from leap_c.mpc import MPCParameter
 
 
 class ReplayBuffer:
-    def __init__(self, buffer_limit: int, device: str, obs_dtype: torch.dtype = torch.float32):
+    def __init__(
+        self, buffer_limit: int, device: str, obs_dtype: torch.dtype = torch.float32
+    ):
         """
         Args:
             buffer_limit: The maximum number of transitions that can be stored in the buffer.

@@ -12,8 +12,8 @@ from acados_template import (
     AcadosSimSolver,
 )
 
-from seal.mpc import MPC, MPCParameter
-from seal.util import AcadosFileManager
+from leap_c.mpc import MPC, MPCParameter
+from leap_c.util import AcadosFileManager
 
 
 def create_dynamics_from_mpc(

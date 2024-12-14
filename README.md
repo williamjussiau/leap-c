@@ -1,8 +1,8 @@
-# SEAL (Super Efficient Acados Learning)
+# leap-c (Learning Predictive Control)
 
 ## Introduction
 
-SEAL provides tools for learning optimal control policies using learning
+leap-c provides tools for learning optimal control policies using learning
 methodologies Imitation learning (IL) and Reinforcement Learning (RL) to enhance
 Model Predictive Control (MPC) policies. It is built on top of
 [acados](https://docs.acados.org/index.html) and [casadi](https://web.casadi.org/).
@@ -11,17 +11,17 @@ Model Predictive Control (MPC) policies. It is built on top of
 
 ### Dependencies
 
-SEAL requires the following dependencies that need to be installed separately:
+leap-c requires the following dependencies that need to be installed separately:
 
 - [casadi](https://web.casadi.org/) for symbolic computations
 - [acados](https://docs.acados.org/index.html) for generating OCP solvers
 
 ### acados as a submodule
 
-SEAL uses acados as a submodule. To clone the repository with the submodule, use the following command:
+leap-c uses acados as a submodule. To clone the repository with the submodule, use the following command:
 
 ``` bash
-    git clone --recurse-submodules git@github.com:JasperHoffmann/seal.git
+    git clone --recurse-submodules git@github.com:leap-c/leap-c.git
 ```
 
 Follow the installation instructions for acados [here](https://docs.acados.org/installation/)
@@ -33,14 +33,14 @@ Create python virtual environment and install the (editable) package with the fo
 ``` bash
     sudo pip3 install virtualenv
     cd <PATH_TO_VENV_DIRECTORY>
-    virtualenv seal_venv --python=/usr/bin/python3
-    source seal_venv/bin/activate
+    virtualenv .venv --python=/usr/bin/python3
+    source .venv/bin/activate
 ```
 
 Install the required casadi version with the installation script:
 
 ``` bash
-    cd <PATH_TO_SEAL_DIRECTORY>
+    cd <PATH_TO_LEAP_C_DIRECTORY>
     ./install_new_casadi_py311_x86_64.sh
 ```
 

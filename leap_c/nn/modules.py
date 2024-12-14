@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from acados_template import AcadosSimSolver
 
-from seal.mpc import MPC, MPCParameter, MPCState
+from leap_c.mpc import MPC, MPCParameter, MPCState
 
 from .autograd import AutogradCasadiFunction, DynamicsSimFunction, MPCSolutionFunction
 

@@ -6,8 +6,8 @@ import pandas as pd
 import pytest
 from conftest import generate_batch_constant
 
-from seal.mpc import MPC
-from seal.util import SX_to_labels
+from leap_c.mpc import MPC
+from leap_c.util import SX_to_labels
 
 
 def compute_diff_solve_batch_solve(

@@ -9,8 +9,8 @@ import torch
 import torch.autograd as autograd
 from acados_template import AcadosSimSolver
 
-from seal.mpc import MPC, MPCInput, MPCParameter, MPCState
-from seal.util import tensor_to_numpy
+from leap_c.mpc import MPC, MPCInput, MPCParameter, MPCState
+from leap_c.util import tensor_to_numpy
 
 
 class AutogradCasadiFunction(autograd.Function):

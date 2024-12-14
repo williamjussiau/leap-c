@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from seal.ocp_env import OCPEnv
+from leap_c.ocp_env import OCPEnv
 
 
 def test_env_reset(all_ocp_env: list[OCPEnv]):

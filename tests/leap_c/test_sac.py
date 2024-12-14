@@ -4,9 +4,9 @@ import shutil
 import numpy as np
 import pytest
 
-from seal.examples.linear_system import LinearSystemOcpEnv
-from seal.logging import NumberLogger
-from seal.scripts.rl.linear_system_sac import (
+from leap_c.examples.linear_system import LinearSystemOcpEnv
+from leap_c.logging import NumberLogger
+from leap_c.scripts.rl.linear_system_sac import (
     LinearSystemSACConfig,
     LinearSystemSACTrainer,
     Scenario,
@@ -17,7 +17,7 @@ from seal.scripts.rl.linear_system_sac import (
     run_linear_system_sac,
     standard_config_dict,
 )
-from seal.util import create_dir_if_not_exists
+from leap_c.util import create_dir_if_not_exists
 
 
 def test_standard_sac_does_it_run():

@@ -4,8 +4,8 @@ import gymnasium as gym
 import numpy as np
 from gymnasium import spaces
 
-from seal.dynamics import create_dynamics_from_mpc
-from seal.mpc import MPC, MPCParameter
+from leap_c.dynamics import create_dynamics_from_mpc
+from leap_c.mpc import MPC, MPCParameter
 
 
 class OCPEnv(gym.Env):

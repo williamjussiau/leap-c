@@ -8,13 +8,13 @@ from casadi.tools import struct_symSX
 from gymnasium.spaces import Box
 from pygame import gfxdraw
 
-from seal.examples.render_utils import draw_arrow
-from seal.examples.util import (
+from leap_c.examples.render_utils import draw_arrow
+from leap_c.examples.util import (
     find_param_in_p_or_p_global,
     translate_learnable_param_to_p_global,
 )
-from seal.mpc import MPC
-from seal.ocp_env import OCPEnv
+from leap_c.mpc import MPC
+from leap_c.ocp_env import OCPEnv
 
 
 class PendulumOnCartMPC(MPC):

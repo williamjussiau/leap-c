@@ -4,9 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Normal
 
-from seal.mpc import MPC, MPCParameter, MPCState
-from seal.nn.modules import MPCSolutionModule
-from seal.util import put_each_index_of_tensor_as_entry_into
+from leap_c.mpc import MPC, MPCParameter, MPCState
+from leap_c.nn.modules import MPCSolutionModule
+from leap_c.util import put_each_index_of_tensor_as_entry_into
 
 
 def string_to_activation(activation: str) -> nn.Module:

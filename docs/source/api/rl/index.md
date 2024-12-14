@@ -1,7 +1,7 @@
 # Reinforcement Learning
 
 ```{eval-rst}
-.. automodule:: seal.rl
+.. automodule:: leap_c.rl
    :members:
    :undoc-members:
    :show-inheritance:

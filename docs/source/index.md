@@ -1,6 +1,6 @@
-# SEAL
+# leap-c
 
-## Super Efficient acados Learning
+## Learning Predictive Control
 
 A framework for integrating optimal control solvers into deep learning pipelines.
 
@@ -12,13 +12,13 @@ A framework for integrating optimal control solvers into deep learning pipelines
 
 ### Development
 
-SEAL is developed through collaboration between:
+leap-c is developed through collaboration between:
 
 - [Department of Engineering Cybernetics](https://www.ntnu.edu/itk) - Norwegian University of Science and Technology (Prof. Sebastien Gros)
 - [Neurobotics Lab](https://nr.informatik.uni-freiburg.de/welcome) - University of Freiburg (Prof. Joschka Boedeker)  
 - [Systems Control and Optimization Laboratory](https://www.syscop.de/) - University of Freiburg (Prof. Moritz Diehl)
 
-[View on GitHub](https://github.com/JasperHoffmann/seal)
+[View on GitHub](https://github.com/leap-c/leap-c)
 
 ### Documentation
 

@@ -1,7 +1,7 @@
 # Model Predictive Control
 
 ```{eval-rst}
-.. automodule:: seal.mpc
+.. automodule:: leap_c.mpc
    :members:
    :undoc-members:
    :show-inheritance:

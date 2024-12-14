@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(".."))
 
-project = "SEAL"
+project = "leap-c"
 copyright = "2024, Dirk, Jasper, Leonard"
 author = "Dirk, Jasper, Leonard"
 release = "2024"

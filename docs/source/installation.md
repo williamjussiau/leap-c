@@ -10,8 +10,8 @@
 - [CasADi nightly-se2 ](https://github.com/casadi/casadi/releases/tag/nightly-se2)
 
 ```bash
-    git clone https://github.com/JasperHoffmann/seal
-    cd seal
+    git clone git@github.com:leap-c/leap-c.git leap_c
+    cd leap_c
     git submodule update --init --recursive
 ```
 
@@ -53,7 +53,7 @@ and build it as described in the [acados documentation](https://docs.acados.org/
 
 Install PyTorch as described on the [PyTorch website](https://pytorch.org/get-started/locally/).
 
-### Install SEAL
+### Install leap-c
 
 To install the package in the root directory of the repository, run:
 
@@ -67,7 +67,7 @@ For development, you might want to install additional dependencies::
     pip install -e .[dev]
 ```
 
-See the [pyproject.toml](https://github.com/JasperHoffmann/seal/blob/main/pyproject.toml) for more information on the installated packages.
+See the [pyproject.toml](https://github.com/leap-c/leap-c/blob/main/pyproject.toml) for more information on the installated packages.
 
 ## Testing
 

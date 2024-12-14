@@ -68,5 +68,5 @@ Check out tests for the linear system
 
 
 ``` bash
-    python tests/seal/examples/test_linear_system.py
+    python tests/leap_c/examples/test_linear_system.py
 ```

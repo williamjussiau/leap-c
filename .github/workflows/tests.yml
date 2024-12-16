@@ -14,22 +14,22 @@ jobs:
     steps:
 
 
-    - name: Checkout seal
+    - name: Checkout leap-c
       uses: actions/checkout@v4
       with:
-        path: ${{github.workspace}}/seal
+        path: ${{github.workspace}}/leap_c
         submodules: 'recursive'
 
     - name: Download acados artifacts (build, lib, include) into acados repository
       uses: actions/download-artifact@v4
       with:
-        path: ${{github.workspace}}/seal/external/acados
+        path: ${{github.workspace}}/leap_c/external/acados
         repository: acados/acados
         github-token: ${{ secrets.GITHUB_TOKEN }}
         run-id: 11914898176
 
     - name: Install Tera
-      working-directory: ${{github.workspace}}/seal/external/acados
+      working-directory: ${{github.workspace}}/leap_c/external/acados
       shell: bash
       run: |
         .github/linux/install_tera.sh
@@ -38,9 +38,9 @@ jobs:
       working-directory: ${{github.workspace}}
       shell: bash
       run: |
-        echo "ACADOS_SOURCE_DIR=${{github.workspace}}/seal/external/acados" >> $GITHUB_ENV
-        echo "ACADOS_INSTALL_DIR=${{github.workspace}}/seal/external/acados" >> $GITHUB_ENV
-        echo "LD_LIBRARY_PATH=${{github.workspace}}/seal/external/acados/lib" >> $GITHUB_ENV
+        echo "ACADOS_SOURCE_DIR=${{github.workspace}}/leap_c/external/acados" >> $GITHUB_ENV
+        echo "ACADOS_INSTALL_DIR=${{github.workspace}}/leap_c/external/acados" >> $GITHUB_ENV
+        echo "LD_LIBRARY_PATH=${{github.workspace}}/leap_c/external/acados/lib" >> $GITHUB_ENV
 
     - name: Set up Python 3.11
       uses: actions/setup-python@v5
@@ -56,24 +56,24 @@ jobs:
           ${{ runner.os }}-pip-
 
     - name: Install new Casadi
-      working-directory: ${{github.workspace}}/seal
+      working-directory: ${{github.workspace}}/leap_c
       run: |
         ./install_new_casadi_py311_x86_64.sh
 
     - name: Install Python interface
-      working-directory: ${{github.workspace}}/seal/external/acados
+      working-directory: ${{github.workspace}}/leap_c/external/acados
       run: |
         pip install --upgrade pip
         pip install interfaces/acados_template
 
-    - name: Install seal
-      working-directory: ${{github.workspace}}/seal
+    - name: Install leap_c
+      working-directory: ${{github.workspace}}/leap_c
       run: |
         pip install -e .[test]
         pip install torch --extra-index-url https://download.pytorch.org/whl/cpu
 
-    - name: Run seal tests
-      working-directory: ${{github.workspace}}/seal
+    - name: Run leap_c tests
+      working-directory: ${{github.workspace}}/leap_c
       run: |
         pwd
         pytest tests -vv -s

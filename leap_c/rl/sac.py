@@ -10,11 +10,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from seal.nn.modules import CleanseAndReducePerSampleLoss
-from seal.rl.replay_buffer import ReplayBuffer
-from seal.rl.trainer import BaseTrainerConfig, Trainer
-from seal.util import add_prefix_extend, tensor_to_numpy
-from seal.logging import NumberLogger
+from leap_c.nn.modules import CleanseAndReducePerSampleLoss
+from leap_c.rl.replay_buffer import ReplayBuffer
+from leap_c.rl.trainer import BaseTrainerConfig, Trainer
+from leap_c.util import add_prefix_extend, tensor_to_numpy
+from leap_c.logging import NumberLogger
 
 
 class SACQNet(nn.Module):

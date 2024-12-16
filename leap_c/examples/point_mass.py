@@ -11,12 +11,12 @@ from acados_template import AcadosModel, AcadosOcp
 from casadi.tools import struct_symSX
 from pygame import draw, gfxdraw
 
-from seal.examples.render_utils import draw_arrow, draw_ellipse_from_eigen
-from seal.mpc import MPC
-from seal.ocp_env import OCPEnv
+from leap_c.examples.render_utils import draw_arrow, draw_ellipse_from_eigen
+from leap_c.mpc import MPC
+from leap_c.ocp_env import OCPEnv
 
 
-from seal.examples.util import (
+from leap_c.examples.util import (
     find_param_in_p_or_p_global,
     translate_learnable_param_to_p_global,
 )

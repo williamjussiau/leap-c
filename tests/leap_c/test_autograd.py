@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 import torch
 
-from seal.examples.linear_system import LinearSystemMPC
-from seal.mpc import MPCParameter
-from seal.nn.modules import CleanseAndReducePerSampleLoss, MPCSolutionModule
+from leap_c.examples.linear_system import LinearSystemMPC
+from leap_c.mpc import MPCParameter
+from leap_c.nn.modules import CleanseAndReducePerSampleLoss, MPCSolutionModule
 
 
 def test_MPCSolutionModule_on_LinearSystemMPC(

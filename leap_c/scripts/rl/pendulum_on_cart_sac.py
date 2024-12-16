@@ -10,24 +10,25 @@ import torch
 import torch.nn as nn
 from gymnasium.wrappers import TransformAction
 
-from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
-from seal.mpc import MPC, MPCParameter
-from seal.rl.replay_buffer import ReplayBuffer
-from seal.rl.sac import (
+from leap_c.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
+from leap_c.mpc import MPC, MPCParameter
+from leap_c.rl.replay_buffer import ReplayBuffer
+from leap_c.rl.sac import (
     SACActor,
     SACConfig,
     SACQNet,
     SACTrainer,
 )
-from seal.torch_modules import (
+from leap_c.torch_modules import (
     FOUMPCNetwork,
     MeanStdMLP,
     TanhNormalActionNetwork,
     create_mlp,
     string_to_activation,
 )
-from seal.util import create_dir_if_not_exists, tensor_to_numpy
-from seal.logging import NumberLogger, WandbLogger
+from leap_c.util import create_dir_if_not_exists, tensor_to_numpy
+from leap_c.logging import NumberLogger, WandbLogger
+
 
 class LinearWithActivation(nn.Module):
     def __init__(self, input_dim: int, output_dim: int, activation: str):

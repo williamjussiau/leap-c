@@ -3,7 +3,7 @@ import os
 from collections import deque
 from typing import Any
 
-from seal.util import add_prefix_extend, collect_status
+from leap_c.util import add_prefix_extend, collect_status
 
 
 class NumberLogger:
@@ -99,9 +99,7 @@ class NumberLogger:
             self.uncommitted_data = dict()
             if self.commits % self.save_frequency == 0:
                 self._save(self.data_for_log)
-                return (
-                    self.data_for_log
-                )  # Return the current data so custom logging can be easily done on top of this.
+                return self.data_for_log  # Return the current data so custom logging can be easily done on top of this.
 
     def _save(self, data: dict[str, Any]):
         with open(self.filepath, "a") as csv_file:

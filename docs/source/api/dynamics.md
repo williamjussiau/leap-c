@@ -1,7 +1,7 @@
 # Dynamics
 
 ```{eval-rst}
-.. automodule:: seal.dynamics
+.. automodule:: leap_c.dynamics
    :members:
    :undoc-members:
    :show-inheritance:

@@ -8,8 +8,8 @@ import pytest
 from acados_template import AcadosOcpSolver
 from gymnasium.utils.save_video import save_video
 
-from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
-from seal.util import create_dir_if_not_exists
+from leap_c.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
+from leap_c.util import create_dir_if_not_exists
 
 
 def plot_cart_pole_solution(

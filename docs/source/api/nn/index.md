@@ -1,7 +1,7 @@
 # Modules
 
 ```{eval-rst}
-.. automodule:: seal.nn
+.. automodule:: leap_c.nn
    :members:
    :undoc-members:
    :show-inheritance:

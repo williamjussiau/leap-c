@@ -1,5 +1,5 @@
 import numpy as np
-from seal.examples.point_mass import PointMassMPC, PointMassOcpEnv
+from leap_c.examples.point_mass import PointMassMPC, PointMassOcpEnv
 from acados_template import AcadosOcpSolver
 
 

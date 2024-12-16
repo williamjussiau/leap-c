@@ -1,7 +1,7 @@
 # OCP Environment
 
 ```{eval-rst}
-.. automodule:: seal.ocp_env
+.. automodule:: leap_c.ocp_env
    :members:
    :undoc-members:
    :show-inheritance:

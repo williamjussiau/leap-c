@@ -1,7 +1,7 @@
 # Imitation Learning
 
 ```{eval-rst}
-.. automodule:: seal.il
+.. automodule:: leap_c.il
    :members:
    :undoc-members:
    :show-inheritance:

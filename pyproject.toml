@@ -3,14 +3,14 @@ requires = ["setuptools >= 61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "SEAL"
+name = "leap-c"
 version = "2024.0.0"
 dependencies = ["gymnasium", "scipy", "numpy", "pandas", "ruff"]
 
-requires-python = ">=3.8"
+requires-python = ">=3.11"
 authors = [{ name = "Dirk Reinhardt", email = "dirk.p.reinhardt@ntnu.no" }]
 maintainers = [{ name = "Dirk Reinhardt", email = "dirk.p.reinhardt@ntnu.no" }]
-description = "Super Efficient Acados Learning"
+description = "Learning Predictive Control"
 readme = "README.md"
 license = { file = "LICENSE.txt" }
 keywords = [
@@ -27,16 +27,16 @@ classifiers = [
 test = ["pytest", "pygame", "moviepy"]
 rendering = ["pygame", "moviepy"]
 docs = ["sphinx", "sphinx_rtd_theme", "myst-parser"]
-dev = ["seal[rendering]", "seal[docs]", "seal[test]"]
+dev = ["leap_c[rendering]", "leap_c[docs]", "leap_c[test]"]
 wandb = ["wandb"]
 
 [tool.setuptools]
-packages = ["seal"]
+packages = ["leap_c"]
 
 
 [project.urls]
-Repository = "https://github.com/JasperHoffmann/seal"
-"Bug Tracker" = "https://github.com/JasperHoffmann/seal/issues"
+Repository = "https://github.com/leap-c/leap-c"
+"Bug Tracker" = "https://github.com/leap-c/leap-c/issues"
 
 [tool.pytest.ini_options]
 testpaths = "tests"

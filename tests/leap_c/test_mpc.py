@@ -2,8 +2,8 @@ import numpy as np
 import numpy.testing as npt
 import pytest
 
-from seal.examples.linear_system import LinearSystemMPC
-from seal.mpc import MPC, MPCInput, MPCOutput, MPCParameter
+from leap_c.examples.linear_system import LinearSystemMPC
+from leap_c.mpc import MPC, MPCInput, MPCOutput, MPCParameter
 
 
 def mpc_outputs_assert_allclose(

@@ -1,9 +1,9 @@
 import numpy as np
 import pytest
 
-from seal.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
-from seal.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
-from seal.examples.point_mass import PointMassMPC, PointMassOcpEnv
+from leap_c.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
+from leap_c.examples.pendulum_on_cart import PendulumOnCartMPC, PendulumOnCartOcpEnv
+from leap_c.examples.point_mass import PointMassMPC, PointMassOcpEnv
 
 
 def generate_batch_variation(

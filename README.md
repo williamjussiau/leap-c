@@ -66,11 +66,11 @@ E.g., to install cpu-only pytorch you can use
 
 ## Usage
 
-Check out tests for the linear system
+Check out tests for the point mass system
 
 
 ``` bash
-    python tests/leap_c/examples/test_linear_system.py
+    python tests/leap_c/test_point_mass.py
 ```
 
 ## Questions/ Contact

@@ -4,9 +4,8 @@ from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data._utils.collate import collate, default_collate_fn_map
-
 from leap_c.mpc import MPCParameter
+from torch.utils.data._utils.collate import collate, default_collate_fn_map
 
 
 class ReplayBuffer:
@@ -29,36 +28,25 @@ class ReplayBuffer:
 
         self.custom_collate_map = self.create_collate_map()
 
-    def put(self, transition: tuple[Any, np.ndarray, float, Any, bool]):
-        self.buffer.append(transition)
+    def put(self, data: Any):
+        """Put the data into the replay buffer. If the buffer is full, the oldest data is discarded.
 
-    def sample(
-        self, n: int
-    ) -> tuple[Any, torch.Tensor, torch.Tensor, Any, torch.Tensor]:
+        Parameters:
+            data: The data to put into the buffer.
+                It should be collatable according to the collate function.
         """
-        Sample a mini-batch from the replay buffer.
+        self.buffer.append(data)
+
+    def sample(self, n: int) -> Any:
+        """
+        Sample a mini-batch from the replay buffer,
+        collated according to the collate function of this class.
 
         Parameters:
             n: The number of samples to draw.
-
-        Returns:
-            A tuple of the form (obs, a, r, obs_next, done).
-            The observations have been collated using self.collate_obs,
-            Actions are a tensor of shape (n, action_dim) and type torch.float32,
-            Rewards are a tensor of shape (n, 1) and type torch.float32,
-            The observations_next have again been collated using self.collate_obs
-            and dones are a tensor of shape (n, 1) and type torch.float32.
         """
         mini_batch = random.sample(self.buffer, n)
-        obs_lst, a_lst, r_lst, obs_next_lst, done_lst = [], [], [], [], []
-
-        for transition in mini_batch:
-            obs, a, r, obs_next, done = transition
-            obs_lst.append(obs)
-            a_lst.append(a)
-            r_lst.append(r)
-            obs_next_lst.append(obs_next)
-            done_lst.append(done)
+        return collate(mini_batch)
 
         return (
             self.collate_obs(obs_lst),
@@ -126,7 +114,7 @@ class ReplayBuffer:
 
         return custom_collate_map
 
-    def collate_obs(self, obs: Any) -> Any:
+    def collate(self, data: Any) -> Any:
         """Collate the input and cast all final tensors to the device and dtype of the buffer."""
         return collate(obs, collate_fn_map=self.custom_collate_map)
 

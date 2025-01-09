@@ -396,6 +396,7 @@ class SACTrainer(Trainer):
         """NOTE: No logging happens here (all stat dicts are ignored)."""
         s, a, r, s_prime, done = mini_batch
 
+        # Prevents a relatively sneaky error in the target calculation
         if r.ndim == 1:
             r = r.unsqueeze(1)
         if done.ndim == 1:

@@ -41,7 +41,9 @@ class ReplayBuffer:
     def sample(self, n: int) -> Any:
         """
         Sample a mini-batch from the replay buffer,
-        collated according to the collate function of this class.
+        collated according to the collate function of this class
+        and cast to the device and dtype of the buffer according to the
+        pytree_tensor_to function.
 
         Parameters:
             n: The number of samples to draw.
@@ -62,18 +64,9 @@ class ReplayBuffer:
         )
 
     def create_collate_map(self):
-        # TODO: Make collating etc. less messy when implementing warmstarting.
         custom_collate_map = default_collate_fn_map.copy()
 
-        # NOTE: This tensorifies everything with np.array as leaf-data, but not with float (!), int, bool, etc.
-        # Just cast while collating already instead of having to cast each part of the nested structure somewhere later everytime.
-        def torch_fn(batch, *, collate_fn_map=None):
-            # Default collate for tensors but with cast
-            return torch.stack(batch, 0).to(device=self.device, dtype=self.tensor_dtype)
-
-        custom_collate_map[torch.Tensor] = torch_fn
-
-        # NOTE: If MPCParameter should also be tensorified, turn this on and turn mpcparam_fn off
+        # NOTE: If MPCParameter should also be tensorified, you can use this and turn mpcparam_fn off
         # def none_fn(batch, *, collate_fn_map=None):
         #     # Collate nones into one none but throws an error if batch contains something else than none.
         #     if any(x is not None for x in batch):
@@ -85,21 +78,6 @@ class ReplayBuffer:
         def mpcparam_fn(batch, *, collate_fn_map=None):
             # Collate MPCParameters by stacking the p_global and p_stagewise parts, but do not convert them to tensors.
             # Only works if all elements for a field are np.arrays or nones.
-
-            def safe_collate_field(field_data):
-                any_none = False
-                all_none = True
-                for data in field_data:
-                    if data is None:
-                        any_none = True
-                    else:
-                        all_none = False
-                    if any_none and not all_none:
-                        raise ValueError("All or none of the data must be None.")
-                if all_none:
-                    return None
-                else:
-                    return np.stack(field_data, axis=0)
 
             glob_data = [x.p_global for x in batch]
             stag_data = [x.p_stagewise for x in batch]
@@ -117,15 +95,17 @@ class ReplayBuffer:
 
     def collate(self, data: Any) -> Any:
         """Collate the input and cast all final tensors to the device and dtype of the buffer."""
-        return collate(obs, collate_fn_map=self.custom_collate_map)
+        return self.pytree_tensor_to(
+            collate(data, collate_fn_map=self.custom_collate_map)
+        )
 
-    def nested_tensor_to(self, data: Any) -> Any:
-        """Convert all tensors of the nested data structure to self.tensor_dtype and
+    def pytree_tensor_to(self, pytree: Any) -> Any:
+        """Convert all tensors of the pytree to self.tensor_dtype and
         move them to self.device."""
         return tree_map_only(
             torch.Tensor,
             lambda t: t.to(device=self.device, dtype=self.tensor_dtype),
-            data,
+            pytree,
         )
 
     def size(self):

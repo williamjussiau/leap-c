@@ -23,43 +23,45 @@ class ReplayBuffer:
             buffer_limit: The maximum number of transitions that can be stored in the buffer.
                 If the buffer is full, the oldest transitions are discarded when putting in a new one.
             device: The device to which all sampled tensors will be cast.
-            obs_dtype: The data type to which the tensors in the observation will be cast.
-            NOTE: Only works if the observations contain np.ndarrays or torch.tensors as "leaf"-data.
-            If the observations contain other types (e.g. floats (!), ints, bool), the collate function will use the default collate
-            for these types, which creates a tensor without calling the collate for torch.Tensor.
+            tensor_dtype: The data type to which the tensors in the observation will be cast.
         """
         self.buffer = collections.deque(maxlen=buffer_limit)
         self.device = device
         self.tensor_dtype = tensor_dtype
 
-        self.custom_collate_map = self.create_collate_map()
+        self.custom_collate_fn_map = self.create_collate_fn_map()
 
     def put(self, data: Any):
         """Put the data into the replay buffer. If the buffer is full, the oldest data is discarded.
 
         Parameters:
             data: The data to put into the buffer.
-                It should be collatable according to the collate function.
+                It should be collatable according to the custom_collate function.
         """
         self.buffer.append(data)
 
     def sample(self, n: int) -> Any:
         """
         Sample a mini-batch from the replay buffer,
-        collated according to the collate function of this class
-        and cast to the device and dtype of the buffer according to the
-        pytree_tensor_to function.
+        collate the mini-batch according to self.custom_collate_map
+        and cast all tensors in the collated mini-batch (must be a pytree structure)
+        to the device and dtype of the buffer.
 
         Parameters:
             n: The number of samples to draw.
         """
         mini_batch = random.sample(self.buffer, n)
-        return self.custom_collate(mini_batch)
+        return self.pytree_tensor_to(
+            collate(mini_batch, collate_fn_map=self.custom_collate_fn_map)
+        )
 
     @staticmethod
     def _safe_collate_possible_nones(
         field_data: list[None] | list[np.ndarray],
     ) -> None | np.ndarray:
+        """Checks whether the given list contains only Nones or only non-Nones.
+        If it contains only Nones, it returns None, otherwise it uses np.stack on the given list.
+        If a mixture of Nones and non-Nones is detected, a ValueError is raised."""
         any_none = False
         all_none = True
         for data in field_data:
@@ -74,7 +76,10 @@ class ReplayBuffer:
         else:
             return np.stack(field_data, axis=0)  # type:ignore
 
-    def create_collate_map(self):
+    def create_collate_fn_map(self):
+        """Create the collate function map for the collate function.
+        By default, this is the default_collate_fn_map of pytorch, with an additional
+        rule for MPCParameter, AcadosOcpFlattenedIterate and AcadosOcpIterate."""
         custom_collate_map = default_collate_fn_map.copy()
 
         # NOTE: If MPCParameter should also be tensorified, you can turn mpcparam_fn off
@@ -126,14 +131,8 @@ class ReplayBuffer:
 
         return custom_collate_map
 
-    def custom_collate(self, data: Any) -> Any:
-        """Collate the input and cast all final tensors to the device and dtype of the buffer."""
-        return self.pytree_tensor_to(
-            collate(data, collate_fn_map=self.custom_collate_map)
-        )
-
     def pytree_tensor_to(self, pytree: Any) -> Any:
-        """Convert all tensors of the pytree to self.tensor_dtype and
+        """Convert all tensors in the pytree to self.tensor_dtype and
         move them to self.device."""
         return tree_map_only(
             torch.Tensor,

@@ -56,6 +56,24 @@ class ReplayBuffer:
         mini_batch = random.sample(self.buffer, n)
         return self.custom_collate(mini_batch)
 
+    @staticmethod
+    def _safe_collate_possible_nones(
+        field_data: list[None] | list[np.ndarray],
+    ) -> None | np.ndarray:
+        any_none = False
+        all_none = True
+        for data in field_data:
+            if data is None:
+                any_none = True
+            else:
+                all_none = False
+            if any_none and not all_none:
+                raise ValueError("All or none of the data must be None.")
+        if all_none:
+            return None
+        else:
+            return np.stack(field_data, axis=0)  # type:ignore
+
     def create_collate_map(self):
         custom_collate_map = default_collate_fn_map.copy()
 
@@ -77,9 +95,11 @@ class ReplayBuffer:
             idx_data = [x.p_stagewise_sparse_idx for x in batch]
 
             return MPCParameter(
-                p_global=np.stack(glob_data, axis=0),
-                p_stagewise=np.stack(stag_data, axis=0),
-                p_stagewise_sparse_idx=np.stack(idx_data, axis=0),
+                p_global=ReplayBuffer._safe_collate_possible_nones(glob_data),
+                p_stagewise=ReplayBuffer._safe_collate_possible_nones(stag_data),
+                p_stagewise_sparse_idx=ReplayBuffer._safe_collate_possible_nones(
+                    idx_data
+                ),
             )
 
         def acados_flattened_iterate_fn(batch, *, collate_fn_map=None):

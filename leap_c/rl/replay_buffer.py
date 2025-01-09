@@ -5,12 +5,13 @@ from typing import Any
 import numpy as np
 import torch
 from leap_c.mpc import MPCParameter
+from torch.utils._pytree import tree_map_only
 from torch.utils.data._utils.collate import collate, default_collate_fn_map
 
 
 class ReplayBuffer:
     def __init__(
-        self, buffer_limit: int, device: str, obs_dtype: torch.dtype = torch.float32
+        self, buffer_limit: int, device: str, tensor_dtype: torch.dtype = torch.float32
     ):
         """
         Args:
@@ -24,7 +25,7 @@ class ReplayBuffer:
         """
         self.buffer = collections.deque(maxlen=buffer_limit)
         self.device = device
-        self.obs_dtype = obs_dtype
+        self.tensor_dtype = tensor_dtype
 
         self.custom_collate_map = self.create_collate_map()
 
@@ -68,7 +69,7 @@ class ReplayBuffer:
         # Just cast while collating already instead of having to cast each part of the nested structure somewhere later everytime.
         def torch_fn(batch, *, collate_fn_map=None):
             # Default collate for tensors but with cast
-            return torch.stack(batch, 0).to(device=self.device, dtype=self.obs_dtype)
+            return torch.stack(batch, 0).to(device=self.device, dtype=self.tensor_dtype)
 
         custom_collate_map[torch.Tensor] = torch_fn
 
@@ -117,6 +118,15 @@ class ReplayBuffer:
     def collate(self, data: Any) -> Any:
         """Collate the input and cast all final tensors to the device and dtype of the buffer."""
         return collate(obs, collate_fn_map=self.custom_collate_map)
+
+    def nested_tensor_to(self, data: Any) -> Any:
+        """Convert all tensors of the nested data structure to self.tensor_dtype and
+        move them to self.device."""
+        return tree_map_only(
+            torch.Tensor,
+            lambda t: t.to(device=self.device, dtype=self.tensor_dtype),
+            data,
+        )
 
     def size(self):
         return len(self.buffer)

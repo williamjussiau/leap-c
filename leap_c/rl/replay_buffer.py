@@ -4,6 +4,11 @@ from typing import Any
 
 import numpy as np
 import torch
+from acados_template.acados_ocp_iterate import (
+    AcadosOcpFlattenedBatchIterate,
+    AcadosOcpFlattenedIterate,
+    AcadosOcpIterate,
+)
 from leap_c.mpc import MPCParameter
 from torch.utils._pytree import tree_map_only
 from torch.utils.data._utils.collate import collate, default_collate_fn_map
@@ -51,22 +56,11 @@ class ReplayBuffer:
         mini_batch = random.sample(self.buffer, n)
         return collate(mini_batch)
 
-        return (
-            self.collate_obs(obs_lst),
-            torch.from_numpy(np.array(a_lst, dtype=np.float32)).to(device=self.device),
-            torch.from_numpy(np.array(r_lst, dtype=np.float32))
-            .unsqueeze(1)
-            .to(device=self.device),
-            self.collate_obs(obs_next_lst),
-            torch.from_numpy(np.array(done_lst, dtype=np.float32))
-            .unsqueeze(1)
-            .to(device=self.device),
-        )
-
     def create_collate_map(self):
         custom_collate_map = default_collate_fn_map.copy()
 
-        # NOTE: If MPCParameter should also be tensorified, you can use this and turn mpcparam_fn off
+        # NOTE: If MPCParameter should also be tensorified, you can turn mpcparam_fn off
+        # and use the following code for handling the Nones
         # def none_fn(batch, *, collate_fn_map=None):
         #     # Collate nones into one none but throws an error if batch contains something else than none.
         #     if any(x is not None for x in batch):
@@ -77,19 +71,38 @@ class ReplayBuffer:
         # Keeps MPCParameter as np.ndarray
         def mpcparam_fn(batch, *, collate_fn_map=None):
             # Collate MPCParameters by stacking the p_global and p_stagewise parts, but do not convert them to tensors.
-            # Only works if all elements for a field are np.arrays or nones.
 
             glob_data = [x.p_global for x in batch]
             stag_data = [x.p_stagewise for x in batch]
             idx_data = [x.p_stagewise_sparse_idx for x in batch]
 
             return MPCParameter(
-                p_global=safe_collate_field(glob_data),
-                p_stagewise=safe_collate_field(stag_data),
-                p_stagewise_sparse_idx=safe_collate_field(idx_data),
+                p_global=np.stack(glob_data, axis=0),
+                p_stagewise=np.stack(stag_data, axis=0),
+                p_stagewise_sparse_idx=np.stack(idx_data, axis=0),
             )
 
+        def acados_flattened_iterate_fn(batch, *, collate_fn_map=None):
+            return AcadosOcpFlattenedBatchIterate(
+                x=np.stack([x.x for x in batch], axis=0),
+                u=np.stack([x.u for x in batch], axis=0),
+                z=np.stack([x.z for x in batch]),
+                sl=np.stack([x.sl for x in batch]),
+                su=np.stack([x.su for x in batch]),
+                pi=np.stack([x.pi for x in batch]),
+                lam=np.stack([x.lam for x in batch]),
+                N_batch=len(batch),
+            )
+
+        def acados_iterate_fn(batch, *, collate_fn_map=None):
+            # NOTE: Could also be a FlattenedBatchIterate (which has a parallelized set in the batch solver),
+            # but this seems more intuitive. If the user wants to have a flattened batch iterate, he can
+            # just put in AcadosOcpIterate.flatten into the buffer.
+            return list(batch)
+
         custom_collate_map[MPCParameter] = mpcparam_fn
+        custom_collate_map[AcadosOcpFlattenedIterate] = acados_flattened_iterate_fn
+        custom_collate_map[AcadosOcpIterate] = acados_iterate_fn
 
         return custom_collate_map
 

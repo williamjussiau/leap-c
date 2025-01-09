@@ -86,11 +86,11 @@ class ReplayBuffer:
             return AcadosOcpFlattenedBatchIterate(
                 x=np.stack([x.x for x in batch], axis=0),
                 u=np.stack([x.u for x in batch], axis=0),
-                z=np.stack([x.z for x in batch]),
-                sl=np.stack([x.sl for x in batch]),
-                su=np.stack([x.su for x in batch]),
-                pi=np.stack([x.pi for x in batch]),
-                lam=np.stack([x.lam for x in batch]),
+                z=np.stack([x.z for x in batch], axis=0),
+                sl=np.stack([x.sl for x in batch], axis=0),
+                su=np.stack([x.su for x in batch], axis=0),
+                pi=np.stack([x.pi for x in batch], axis=0),
+                lam=np.stack([x.lam for x in batch], axis=0),
                 N_batch=len(batch),
             )
 

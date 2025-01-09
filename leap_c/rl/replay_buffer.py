@@ -54,7 +54,7 @@ class ReplayBuffer:
             n: The number of samples to draw.
         """
         mini_batch = random.sample(self.buffer, n)
-        return collate(mini_batch)
+        return self.custom_collate(mini_batch)
 
     def create_collate_map(self):
         custom_collate_map = default_collate_fn_map.copy()
@@ -106,7 +106,7 @@ class ReplayBuffer:
 
         return custom_collate_map
 
-    def collate(self, data: Any) -> Any:
+    def custom_collate(self, data: Any) -> Any:
         """Collate the input and cast all final tensors to the device and dtype of the buffer."""
         return self.pytree_tensor_to(
             collate(data, collate_fn_map=self.custom_collate_map)
@@ -121,5 +121,5 @@ class ReplayBuffer:
             pytree,
         )
 
-    def size(self):
+    def __len__(self):
         return len(self.buffer)

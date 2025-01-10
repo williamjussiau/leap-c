@@ -1,7 +1,6 @@
 import numpy as np
 import numpy.testing as npt
 import pytest
-
 from leap_c.examples.linear_system import LinearSystemMPC
 from leap_c.mpc import MPC, MPCInput, MPCOutput, MPCParameter
 
@@ -47,6 +46,21 @@ def test_stage_cons(linear_mpc: MPC):
     stage_cons = linear_mpc.stage_cons(x, u)
 
     npt.assert_array_equal(stage_cons["ubx"], np.array([1.0, 0.0]))
+
+
+def test_raising_exception_if_u0_outside_bounds(learnable_linear_mpc: MPC):
+    x0 = np.array([0.5, 0.5])
+    u0 = np.array([1000.0])
+    try:
+        learnable_linear_mpc(
+            MPCInput(x0=x0, u0=u0), throw_error_if_u0_is_outside_ocp_bounds=True
+        )
+        assert False
+    except ValueError:
+        pass
+    learnable_linear_mpc(
+        MPCInput(x0=x0, u0=u0), throw_error_if_u0_is_outside_ocp_bounds=False
+    )
 
 
 def test_statelessness(

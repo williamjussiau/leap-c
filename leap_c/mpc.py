@@ -165,7 +165,7 @@ def set_ocp_solver_initial_condition(
         if mpc_input.u0 is not None:
             u0 = mpc_input.u0
             ocp_solver.set(0, "u", u0)
-            if not throw_error_if_u0_is_outside_ocp_bounds:
+            if throw_error_if_u0_is_outside_ocp_bounds:
                 constr = (
                     ocp_solver.acados_ocp.constraints[0]
                     if isinstance(ocp_solver.acados_ocp, AcadosMultiphaseOcp)

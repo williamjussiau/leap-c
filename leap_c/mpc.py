@@ -7,12 +7,12 @@ from typing import Any, Callable, List, NamedTuple
 import casadi as ca
 import numpy as np
 from acados_template import AcadosOcp, AcadosOcpBatchSolver, AcadosOcpSolver
+from acados_template.acados_multiphase_ocp import AcadosMultiphaseOcp
 from acados_template.acados_ocp_iterate import (
     AcadosOcpFlattenedBatchIterate,
     AcadosOcpFlattenedIterate,
     AcadosOcpIterate,
 )
-
 from leap_c.util import AcadosFileManager
 
 
@@ -153,20 +153,42 @@ def set_ocp_solver_mpc_params(
 
 
 def set_ocp_solver_initial_condition(
-    ocp_solver: AcadosOcpSolver | AcadosOcpBatchSolver, mpc_input: MPCInput
+    ocp_solver: AcadosOcpSolver | AcadosOcpBatchSolver,
+    mpc_input: MPCInput,
+    throw_error_if_u0_is_outside_ocp_bounds: bool,
 ) -> None:
     if isinstance(ocp_solver, AcadosOcpSolver):
-        ocp_solver.set(0, "x", mpc_input.x0)
-        ocp_solver.constraints_set(0, "lbx", mpc_input.x0)
-        ocp_solver.constraints_set(0, "ubx", mpc_input.x0)
+        x0 = mpc_input.x0
+        ocp_solver.set(0, "x", x0)
+        ocp_solver.constraints_set(0, "lbx", x0)
+        ocp_solver.constraints_set(0, "ubx", x0)
         if mpc_input.u0 is not None:
-            ocp_solver.set(0, "u", mpc_input.u0)
-            ocp_solver.constraints_set(0, "lbu", mpc_input.u0)
-            ocp_solver.constraints_set(0, "ubu", mpc_input.u0)
+            u0 = mpc_input.u0
+            ocp_solver.set(0, "u", u0)
+            if not throw_error_if_u0_is_outside_ocp_bounds:
+                constr = (
+                    ocp_solver.acados_ocp.constraints[0]
+                    if isinstance(ocp_solver.acados_ocp, AcadosMultiphaseOcp)
+                    else ocp_solver.acados_ocp.constraints
+                )
+                if np.all(u0 < constr.lbu):
+                    raise ValueError(
+                        "You are about to set an initial control that is below the defined lower bound."
+                    )
+                elif np.all(u0 > constr.ubu):
+                    raise ValueError(
+                        "You are about to set an initial control that is above the defined upper bound."
+                    )
+            ocp_solver.constraints_set(0, "lbu", u0)
+            ocp_solver.constraints_set(0, "ubu", u0)
 
     elif isinstance(ocp_solver, AcadosOcpBatchSolver):
         for i, ocp in enumerate(ocp_solver.ocp_solvers):
-            set_ocp_solver_initial_condition(ocp, mpc_input.get_sample(i))
+            set_ocp_solver_initial_condition(
+                ocp,
+                mpc_input.get_sample(i),
+                throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+            )
 
     else:
         raise Exception(
@@ -538,6 +560,7 @@ class MPC(ABC):
         dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
+        throw_error_if_u0_is_outside_ocp_bounds=True,
     ) -> tuple[MPCOutput, AcadosOcpFlattenedIterate | AcadosOcpFlattenedBatchIterate]:
         """
         Solve the OCP for the given initial state and parameters.
@@ -551,6 +574,8 @@ class MPC(ABC):
             dvdu: Whether to compute the sensitivity of the value function with respect to the action.
             dvdp: Whether to compute the sensitivity of the value function with respect to the parameters.
             use_adj_sens: Whether to use adjoint sensitivity.
+            throw_error_if_u0_is_outside_ocp_bounds: If True, an error will be thrown when given an u0 in mpc_input that
+                is outside the box constraints defined in the cop
 
         Returns:
             mpc_output: The output of the MPC controller.
@@ -567,6 +592,7 @@ class MPC(ABC):
                 dvdu=dvdu,
                 dvdp=dvdp,
                 use_adj_sens=use_adj_sens,
+                throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
             )
 
         return self._batch_solve(
@@ -578,6 +604,7 @@ class MPC(ABC):
             dvdu=dvdu,
             dvdp=dvdp,
             use_adj_sens=use_adj_sens,
+            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
         )
 
     @staticmethod
@@ -592,13 +619,18 @@ class MPC(ABC):
             | None
         ),
         use_sensitivity_solver: bool,
+        throw_error_if_u0_is_outside_ocp_bounds: bool = False,
     ):
         initialize_ocp_solver(
             ocp_solver=solver,
             mpc_parameter=mpc_input.parameters,  # type: ignore
             ocp_iterate=mpc_state,
         )
-        set_ocp_solver_initial_condition(solver, mpc_input)
+        set_ocp_solver_initial_condition(
+            solver,
+            mpc_input,
+            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+        )
         # TODO: Cover case where we do not want to do a forward evaluation
         solver.solve()
 
@@ -608,7 +640,11 @@ class MPC(ABC):
                 mpc_parameter=mpc_input.parameters,  # type: ignore
                 ocp_iterate=mpc_state,
             )
-            set_ocp_solver_initial_condition(sensitivity_solver, mpc_input)
+            set_ocp_solver_initial_condition(
+                sensitivity_solver,
+                mpc_input,
+                throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+            )
 
             sensitivity_solver.load_iterate_from_flat_obj(
                 solver.store_iterate_to_flat_obj()
@@ -625,6 +661,7 @@ class MPC(ABC):
         dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
+        throw_error_if_u0_is_outside_ocp_bounds: bool = True,
     ) -> tuple[MPCOutput, AcadosOcpFlattenedIterate]:
         if mpc_input.u0 is None and dvdu:
             raise ValueError("dvdu is only allowed if u0 is set in the input.")
@@ -637,6 +674,7 @@ class MPC(ABC):
             mpc_input=mpc_input,
             mpc_state=mpc_state,
             use_sensitivity_solver=use_sensitivity_solver,
+            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
         )
 
         kw = {}
@@ -735,6 +773,7 @@ class MPC(ABC):
         dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
+        throw_error_if_u0_is_outside_ocp_bounds: bool = True,
     ) -> tuple[MPCOutput, AcadosOcpFlattenedBatchIterate]:
         if mpc_input.u0 is None and dvdu:
             raise ValueError("dvdu is only allowed if u0 is set in the input.")
@@ -747,6 +786,7 @@ class MPC(ABC):
             mpc_input,
             mpc_state,
             use_sensitivity_solver,
+            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
         )
 
         kw = {}

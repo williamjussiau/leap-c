@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
 import torch
-
 from leap_c.examples.linear_system import LinearSystemMPC
 from leap_c.mpc import MPCParameter
 from leap_c.nn.modules import CleanseAndReducePerSampleLoss, MPCSolutionModule

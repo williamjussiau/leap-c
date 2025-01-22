@@ -8,6 +8,7 @@ from acados_template.acados_ocp_iterate import (
     AcadosOcpFlattenedIterate,
     AcadosOcpIterate,
 )
+from leap_c.collate import safe_collate_possible_nones
 from leap_c.mpc import MPCParameter
 from leap_c.rl.replay_buffer import ReplayBuffer
 
@@ -231,7 +232,7 @@ def test_safe_collate_possible_nones():
         np.array([4, 5, 6], dtype=np.float64),
     ]
     try:
-        ReplayBuffer._safe_collate_possible_nones(data)
+        safe_collate_possible_nones(data)
         assert False
     except ValueError:
         pass
@@ -240,11 +241,11 @@ def test_safe_collate_possible_nones():
         np.array([4, 5, 6], dtype=np.float64),
     ]
     assert np.array_equal(
-        ReplayBuffer._safe_collate_possible_nones(data),  # type:ignore
+        safe_collate_possible_nones(data),  # type:ignore
         np.array([[1, 2, 3], [4, 5, 6]], dtype=np.float64),
     )
     data = [None, None, None]
-    assert ReplayBuffer._safe_collate_possible_nones(data) is None
+    assert safe_collate_possible_nones(data) is None
 
 
 def test_length():

@@ -332,10 +332,11 @@ class MPC(ABC):
         discount_factor: float | None = None,
         default_init_state_fn: Callable[[MPCInput], MPCSingleState | MPCBatchedState]
         | None = None,
+        n_batch: int = 1,
         export_directory: Path | None = None,
         export_directory_sensitivity: Path | None = None,
         cleanup: bool = True,
-        n_batch: int = 1,
+        throw_error_if_u0_is_outside_ocp_bounds: bool = True,
     ):
         """
         Initialize the MPC object.
@@ -344,12 +345,14 @@ class MPC(ABC):
             ocp: Optimal control problem.
             discount_factor: Discount factor. If None, acados default cost scaling is used, i.e. dt for intermediate stages, 1 for terminal stage.
             default_init_state_fn: Function to use as default iterate initialization for the solver. If None, the solver iterate is initialized with zeros.
+            n_batch: Number of batched solvers to use.
             export_directory: Directory to export the generated code.
             export_directory_sensitivity: Directory to export the generated
                 code for the sensitivity problem.
             cleanup: Whether to clean up the export directory on exit or
                 when the object is deleted.
-            n_batch: Number of batched solvers to use.
+            throw_error_if_u0_is_outside_ocp_bounds: If True, an error will be thrown when given an u0 in mpc_input that
+                is outside the box constraints defined in the ocp.
         """
         self.ocp = ocp
 
@@ -382,6 +385,10 @@ class MPC(ABC):
 
         # size of solver batch
         self.n_batch = n_batch
+
+        self.throw_error_if_u0_is_outside_ocp_bounds = (
+            throw_error_if_u0_is_outside_ocp_bounds
+        )
 
         # constraints and cost functions
         self._h_fn = None
@@ -582,7 +589,6 @@ class MPC(ABC):
         dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
-        throw_error_if_u0_is_outside_ocp_bounds=True,
     ) -> tuple[MPCOutput, MPCSingleState | MPCBatchedState]:
         """
         Solve the OCP for the given initial state and parameters. If an mpc_state is given and the solver does not converge,
@@ -598,8 +604,6 @@ class MPC(ABC):
             dvdu: Whether to compute the sensitivity of the value function with respect to the action.
             dvdp: Whether to compute the sensitivity of the value function with respect to the parameters.
             use_adj_sens: Whether to use adjoint sensitivity.
-            throw_error_if_u0_is_outside_ocp_bounds: If True, an error will be thrown when given an u0 in mpc_input that
-                is outside the box constraints defined in the cop
 
         Returns:
             mpc_output: The output of the MPC controller.
@@ -616,7 +620,6 @@ class MPC(ABC):
                 dvdu=dvdu,
                 dvdp=dvdp,
                 use_adj_sens=use_adj_sens,
-                throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
             )
 
         return self._batch_solve(
@@ -628,7 +631,6 @@ class MPC(ABC):
             dvdu=dvdu,
             dvdp=dvdp,
             use_adj_sens=use_adj_sens,
-            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
         )
 
     @staticmethod
@@ -638,7 +640,7 @@ class MPC(ABC):
         mpc_input: MPCInput,
         mpc_state: MPCSingleState | MPCBatchedState | None,
         backup_fn: Callable[[MPCInput], MPCSingleState | MPCBatchedState] | None,
-        throw_error_if_u0_is_outside_ocp_bounds: bool = False,
+        throw_error_if_u0_is_outside_ocp_bounds: bool = True,
     ):
         initialize_ocp_solver(
             ocp_solver=solver,
@@ -699,7 +701,6 @@ class MPC(ABC):
         dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
-        throw_error_if_u0_is_outside_ocp_bounds: bool = True,
     ) -> tuple[MPCOutput, AcadosOcpFlattenedIterate]:
         if mpc_input.u0 is None and dvdu:
             raise ValueError("dvdu is only allowed if u0 is set in the input.")
@@ -714,7 +715,7 @@ class MPC(ABC):
             mpc_input=mpc_input,
             mpc_state=mpc_state,
             backup_fn=self.default_init_state_fn,
-            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+            throw_error_if_u0_is_outside_ocp_bounds=self.throw_error_if_u0_is_outside_ocp_bounds,
         )
 
         kw = {}
@@ -813,7 +814,6 @@ class MPC(ABC):
         dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
-        throw_error_if_u0_is_outside_ocp_bounds: bool = True,
     ) -> tuple[MPCOutput, AcadosOcpFlattenedBatchIterate]:
         if mpc_input.u0 is None and dvdu:
             raise ValueError("dvdu is only allowed if u0 is set in the input.")
@@ -828,7 +828,7 @@ class MPC(ABC):
             mpc_input=mpc_input,
             mpc_state=mpc_state,
             backup_fn=self.default_init_state_fn,
-            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+            throw_error_if_u0_is_outside_ocp_bounds=self.throw_error_if_u0_is_outside_ocp_bounds,
         )
 
         kw = {}

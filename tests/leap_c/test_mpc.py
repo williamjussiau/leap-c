@@ -57,16 +57,15 @@ def test_stage_cons(linear_mpc: MPC):
 def test_raising_exception_if_u0_outside_bounds(learnable_linear_mpc: MPC):
     x0 = np.array([0.5, 0.5])
     u0 = np.array([1000.0])
+    learnable_linear_mpc.throw_error_if_u0_is_outside_ocp_bounds = True
     try:
-        learnable_linear_mpc(
-            MPCInput(x0=x0, u0=u0), throw_error_if_u0_is_outside_ocp_bounds=True
-        )
+        learnable_linear_mpc(MPCInput(x0=x0, u0=u0))
         assert False
     except ValueError:
         pass
-    learnable_linear_mpc(
-        MPCInput(x0=x0, u0=u0), throw_error_if_u0_is_outside_ocp_bounds=False
-    )
+    learnable_linear_mpc.throw_error_if_u0_is_outside_ocp_bounds = False
+    learnable_linear_mpc(MPCInput(x0=x0, u0=u0))
+    learnable_linear_mpc.throw_error_if_u0_is_outside_ocp_bounds = True
 
 
 def test_statelessness(

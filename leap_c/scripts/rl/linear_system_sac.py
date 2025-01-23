@@ -8,8 +8,8 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-
 from leap_c.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
+from leap_c.logging import NumberLogger, WandbLogger
 from leap_c.mpc import MPC, MPCParameter
 from leap_c.rl.replay_buffer import ReplayBuffer
 from leap_c.rl.sac import (
@@ -18,7 +18,6 @@ from leap_c.rl.sac import (
     SACQNet,
     SACTrainer,
 )
-from leap_c.logging import NumberLogger, WandbLogger
 from leap_c.torch_modules import (
     FOUMPCNetwork,
     MeanStdMLP,
@@ -187,7 +186,7 @@ class LinearSystemSACTrainer(SACTrainer):
     ) -> tuple[np.ndarray, dict[str, Any]]:
         state, params = obs
         state_tensor = torch.tensor(
-            state, dtype=self.replay_buffer.obs_dtype, device=self.device
+            state, dtype=self.replay_buffer.tensor_dtype, device=self.device
         )
         output = self.actor((state_tensor, params), deterministic=deterministic)
         return tensor_to_numpy(output[0]), output[-1]

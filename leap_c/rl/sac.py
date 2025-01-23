@@ -1,7 +1,4 @@
-import csv
-import os
 from abc import abstractmethod
-from collections import deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,12 +6,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from leap_c.logging import NumberLogger
 from leap_c.nn.modules import CleanseAndReducePerSampleLoss
 from leap_c.rl.replay_buffer import ReplayBuffer
 from leap_c.rl.trainer import BaseTrainerConfig, Trainer
 from leap_c.util import add_prefix_extend, tensor_to_numpy
-from leap_c.logging import NumberLogger
 
 
 class SACQNet(nn.Module):
@@ -399,6 +395,12 @@ class SACTrainer(Trainer):
     ) -> torch.Tensor:
         """NOTE: No logging happens here (all stat dicts are ignored)."""
         s, a, r, s_prime, done = mini_batch
+
+        # Prevents a relatively sneaky error in the target calculation
+        if r.ndim == 1:
+            r = r.unsqueeze(1)
+        if done.ndim == 1:
+            done = done.unsqueeze(1)
 
         with torch.no_grad():
             actor_fwd = self.actor.forward(s_prime)

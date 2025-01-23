@@ -323,6 +323,64 @@ def set_discount_factor(
         )
 
 
+def _solve_shared(
+    solver: AcadosOcpSolver | AcadosOcpBatchSolver,
+    sensitivity_solver: AcadosOcpSolver | AcadosOcpBatchSolver | None,
+    mpc_input: MPCInput,
+    mpc_state: MPCSingleState | MPCBatchedState | None,
+    backup_fn: Callable[[MPCInput], MPCSingleState | MPCBatchedState] | None,
+    throw_error_if_u0_is_outside_ocp_bounds: bool = True,
+):
+    initialize_ocp_solver(
+        ocp_solver=solver,
+        mpc_input=mpc_input,
+        ocp_iterate=mpc_state,
+        throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+    )
+    # TODO: Cover case where we do not want to do a forward evaluation
+    solver.solve()
+
+    if backup_fn is not None:
+        if isinstance(solver, AcadosOcpSolver):
+            if solver.status != 0:
+                initialize_ocp_solver(
+                    ocp_solver=solver,
+                    mpc_input=mpc_input,
+                    ocp_iterate=backup_fn(mpc_input),
+                    set_params=False,
+                    throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+                )
+                solver.solve()
+        elif isinstance(solver, AcadosOcpBatchSolver):
+            any_failed = False
+            for i, ocp_solver in enumerate(solver.ocp_solvers):
+                if ocp_solver.status != 0:
+                    single_input = mpc_input.get_sample(i)
+                    initialize_ocp_solver(
+                        ocp_solver=ocp_solver,
+                        mpc_input=single_input,
+                        ocp_iterate=backup_fn(single_input),
+                        set_params=False,
+                        throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+                    )
+                    any_failed = True
+            if any_failed:
+                solver.solve()
+        else:
+            raise ValueError(
+                f"expected AcadosOcpSolver or AcadosOcpBatchSolver, got {type(solver)}."
+            )
+
+    if sensitivity_solver is not None:
+        initialize_ocp_solver(
+            ocp_solver=sensitivity_solver,
+            mpc_input=mpc_input,
+            ocp_iterate=solver.store_iterate_to_flat_obj(),
+            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+        )
+        sensitivity_solver.solve()
+
+
 class MPC(ABC):
     """MPC abstract base class."""
 
@@ -633,64 +691,6 @@ class MPC(ABC):
             use_adj_sens=use_adj_sens,
         )
 
-    @staticmethod
-    def __solve_shared(
-        solver: AcadosOcpSolver | AcadosOcpBatchSolver,
-        sensitivity_solver: AcadosOcpSolver | AcadosOcpBatchSolver | None,
-        mpc_input: MPCInput,
-        mpc_state: MPCSingleState | MPCBatchedState | None,
-        backup_fn: Callable[[MPCInput], MPCSingleState | MPCBatchedState] | None,
-        throw_error_if_u0_is_outside_ocp_bounds: bool = True,
-    ):
-        initialize_ocp_solver(
-            ocp_solver=solver,
-            mpc_input=mpc_input,
-            ocp_iterate=mpc_state,
-            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
-        )
-        # TODO: Cover case where we do not want to do a forward evaluation
-        solver.solve()
-
-        if backup_fn is not None:
-            if isinstance(solver, AcadosOcpSolver):
-                if solver.status != 0:
-                    initialize_ocp_solver(
-                        ocp_solver=solver,
-                        mpc_input=mpc_input,
-                        ocp_iterate=backup_fn(mpc_input),
-                        set_params=False,
-                        throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
-                    )
-                    solver.solve()
-            elif isinstance(solver, AcadosOcpBatchSolver):
-                any_failed = False
-                for i, ocp_solver in enumerate(solver.ocp_solvers):
-                    if ocp_solver.status != 0:
-                        single_input = mpc_input.get_sample(i)
-                        initialize_ocp_solver(
-                            ocp_solver=ocp_solver,
-                            mpc_input=single_input,
-                            ocp_iterate=backup_fn(single_input),
-                            set_params=False,
-                            throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
-                        )
-                        any_failed = True
-                if any_failed:
-                    solver.solve()
-            else:
-                raise ValueError(
-                    f"expected AcadosOcpSolver or AcadosOcpBatchSolver, got {type(solver)}."
-                )
-
-        if sensitivity_solver is not None:
-            initialize_ocp_solver(
-                ocp_solver=sensitivity_solver,
-                mpc_input=mpc_input,
-                ocp_iterate=solver.store_iterate_to_flat_obj(),
-                throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
-            )
-            sensitivity_solver.solve()
-
     def _solve(
         self,
         mpc_input: MPCInput,
@@ -707,7 +707,7 @@ class MPC(ABC):
 
         use_sensitivity_solver = dudx or dudp or dvdp
 
-        MPC.__solve_shared(
+        _solve_shared(
             solver=self.ocp_solver,
             sensitivity_solver=self.ocp_sensitivity_solver
             if use_sensitivity_solver
@@ -820,7 +820,7 @@ class MPC(ABC):
 
         use_sensitivity_solver = dudx or dudp or dvdp
 
-        MPC.__solve_shared(
+        _solve_shared(
             solver=self.ocp_batch_solver,
             sensitivity_solver=self.ocp_batch_sensitivity_solver
             if use_sensitivity_solver

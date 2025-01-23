@@ -206,11 +206,11 @@ def set_ocp_solver_initial_condition(
                     if isinstance(ocp_solver.acados_ocp, AcadosMultiphaseOcp)
                     else ocp_solver.acados_ocp.constraints
                 )
-                if constr.lbu.size != 0 and np.all(u0 < constr.lbu):
+                if constr.lbu.size != 0 and np.any(u0 < constr.lbu):
                     raise ValueError(
                         "You are about to set an initial control that is below the defined lower bound."
                     )
-                elif constr.ubu.size != 0 and np.all(u0 > constr.ubu):
+                elif constr.ubu.size != 0 and np.any(u0 > constr.ubu):
                     raise ValueError(
                         "You are about to set an initial control that is above the defined upper bound."
                     )

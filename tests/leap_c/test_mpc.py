@@ -2,6 +2,7 @@ from dataclasses import fields
 
 import numpy as np
 import numpy.testing as npt
+import pytest
 from acados_template.acados_ocp_iterate import (
     AcadosOcpFlattenedBatchIterate,
     AcadosOcpFlattenedIterate,
@@ -51,6 +52,20 @@ def test_stage_cons(linear_mpc: MPC):
     stage_cons = linear_mpc.stage_cons(x, u)
 
     npt.assert_array_equal(stage_cons["ubx"], np.array([1.0, 0.0]))
+
+
+def test_raising_exception_if_u0_outside_bounds(learnable_linear_mpc: MPC):
+    x0 = np.array([0.5, 0.5])
+    u0 = np.array([1000.0])
+    learnable_linear_mpc.throw_error_if_u0_is_outside_ocp_bounds = True
+    try:
+        learnable_linear_mpc(MPCInput(x0=x0, u0=u0))
+        assert False
+    except ValueError:
+        pass
+    learnable_linear_mpc.throw_error_if_u0_is_outside_ocp_bounds = False
+    learnable_linear_mpc(MPCInput(x0=x0, u0=u0))
+    learnable_linear_mpc.throw_error_if_u0_is_outside_ocp_bounds = True
 
 
 def test_statelessness(
@@ -299,5 +314,4 @@ def test_closed_loop(
 
 
 if __name__ == "__main__":
-    test_statelessness_batched(4)
-#    pytest.main([__file__])
+    pytest.main([__file__])

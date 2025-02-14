@@ -1,10 +1,9 @@
 import numpy as np
 import pytest
-from leap_c.examples.linear_system import LinearSystemMPC, LinearSystemOcpEnv
-from leap_c.examples.pointmass.mpc import PointMassMPC
-from leap_c.examples.pointmass.env import PointMassEnv
 from leap_c.examples.pendulum_on_a_cart.env import PendulumOnCartSwingupEnv
-from leap_c.examples.pendulum_on_cart import PendulumOnCartMPC
+from leap_c.examples.pendulum_on_a_cart.mpc import PendulumOnCartMPC
+from leap_c.examples.pointmass.env import PointMassEnv
+from leap_c.examples.pointmass.mpc import PointMassMPC
 
 
 def generate_batch_variation(
@@ -64,12 +63,6 @@ def generate_batch_constant(val: np.ndarray, shape) -> np.ndarray:
 
 
 @pytest.fixture(scope="session")
-def linear_mpc():
-    """Fixture for the linear system MPC."""
-    return LinearSystemMPC()
-
-
-@pytest.fixture(scope="session")
 def point_mass_mpc():
     """Fixture for the point mass MPC."""
     return PointMassMPC()
@@ -84,29 +77,6 @@ def pendulum_on_cart_mpc() -> PendulumOnCartMPC:
 @pytest.fixture(scope="session")
 def n_batch() -> int:
     return 4
-
-
-@pytest.fixture(scope="session")
-def learnable_linear_mpc(n_batch: int) -> LinearSystemMPC:
-    """Fixture for the linear system MPC with learnable parameters."""
-    return LinearSystemMPC(
-        learnable_params=["A", "B", "Q", "R", "b", "f", "V_0"], n_batch=n_batch
-    )
-
-
-@pytest.fixture(scope="session")
-def linear_system_ocp_env(learnable_linear_mpc: LinearSystemMPC) -> LinearSystemOcpEnv:
-    return LinearSystemOcpEnv(learnable_linear_mpc, render_mode="rgb_array")
-
-
-@pytest.fixture(scope="session")
-def linear_mpc_p_global(
-    learnable_linear_mpc: LinearSystemMPC, n_batch: int
-) -> np.ndarray:
-    """Fixture for the global parameters of the linear system MPC."""
-    return generate_batch_variation(
-        learnable_linear_mpc.ocp_solver.acados_ocp.p_global_values, n_batch
-    )
 
 
 @pytest.fixture(scope="session")
@@ -146,10 +116,24 @@ def learnable_pendulum_on_cart_mpc_ext_cost(n_batch: int) -> PendulumOnCartMPC:
 
 
 @pytest.fixture(scope="session")
-def learnable_pendulum_on_cart_mpc_lls_cost(n_batch: int) -> PendulumOnCartMPC:
+def learnable_pendulum_on_cart_mpc_lls_cost(
+    n_batch: int,
+) -> PendulumOnCartMPC:
     """Fixture for the pendulum on cart MPC with learnable parameters, using Linear Least Squares cost."""
     return PendulumOnCartMPC(
         learnable_params=["M", "m", "g", "L11", "xref1"],
+        n_batch=n_batch,
+        least_squares_cost=True,
+    )
+
+
+@pytest.fixture(scope="session")
+def learnable_pendulum_on_cart_mpc_lls_cost_only_cost_params(
+    n_batch: int,
+) -> PendulumOnCartMPC:
+    """Fixture for the pendulum on cart MPC with learnable parameters, using Linear Least Squares cost and only cost params are learnable."""
+    return PendulumOnCartMPC(
+        learnable_params=["L11", "xref1"],
         n_batch=n_batch,
         least_squares_cost=True,
     )
@@ -171,7 +155,8 @@ def all_env(
 
 @pytest.fixture(scope="session")
 def pendulum_on_cart_p_global(
-    learnable_pendulum_on_cart_mpc_lls_cost: PendulumOnCartMPC, n_batch: int
+    learnable_pendulum_on_cart_mpc_lls_cost: PendulumOnCartMPC,
+    n_batch: int,
 ) -> np.ndarray:
     """Fixture for the global parameters of the pendulum on cart MPC."""
     return generate_batch_variation(

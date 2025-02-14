@@ -6,6 +6,7 @@ from typing import Any, Callable, List, NamedTuple
 
 import casadi as ca
 import numpy as np
+import torch
 from acados_template import AcadosOcp, AcadosOcpBatchSolver, AcadosOcpSolver
 from acados_template.acados_multiphase_ocp import AcadosMultiphaseOcp
 from acados_template.acados_ocp_iterate import (
@@ -13,12 +14,20 @@ from acados_template.acados_ocp_iterate import (
     AcadosOcpFlattenedIterate,
     AcadosOcpIterate,
 )
-from leap_c.util import AcadosFileManager, set_standard_sensitivity_options
+
+from leap_c.util import (
+    AcadosFileManager,
+    set_standard_sensitivity_options,
+    SX_to_labels,
+)
 
 
 class MPCParameter(NamedTuple):
     """
     A named tuple to store the parameters of the MPC planner.
+    NOTE: If the non-sensitivity solver is using something else than EXTERNAL cost, like LLS cost, then
+    only the first few entries of the here given p_global is set (such that its shape matches the shape of the default p_global
+    in that solver). This is due to the fact that "unused" (wrt. casadi expressions) p_global entries are currently not allowed in the solver.
 
     Attributes:
         p_global: The part of p_global that should be learned in shape (n_p_global_learnable, ) or (B, n_p_global_learnable).
@@ -88,6 +97,16 @@ class MPCParameter(NamedTuple):
             p_yref_e=p_yref_e,
         )
 
+    def ensure_float64(self) -> "MPCParameter":
+        def convert(k, v):
+            if k not in ["p_stagewise_sparse_idx"]:
+                return v.astype(np.float64) if v is not None else None
+            return v
+
+        kw = {k: convert(k, v) for k, v in self._asdict().items()}
+
+        return MPCParameter(**kw)
+
 
 MPCSingleState = AcadosOcpIterate | AcadosOcpFlattenedIterate
 MPCBatchedState = list[AcadosOcpIterate] | AcadosOcpFlattenedBatchIterate
@@ -137,10 +156,10 @@ class MPCOutput(NamedTuple):
         du0_dx0: The sensitivity of the initial action with respect to the initial state.
     """
 
-    status: np.ndarray | None = None  # (B, ) or (1, )
-    u0: np.ndarray | None = None  # (B, u_dim) or (u_dim, )
-    Q: np.ndarray | None = None  # (B, ) or (1, )
-    V: np.ndarray | None = None  # (B, ) or (1, )
+    status: np.ndarray | torch.Tensor | None = None  # (B, ) or (1, )
+    u0: np.ndarray | torch.Tensor | None = None  # (B, u_dim) or (u_dim, )
+    Q: np.ndarray | torch.Tensor | None = None  # (B, ) or (1, )
+    V: np.ndarray | torch.Tensor | None = None  # (B, ) or (1, )
     dvalue_dx0: np.ndarray | None = None  # (B, x_dim) or (x_dim, )
     dvalue_du0: np.ndarray | None = None  # (B, u_dim) or (u_dim, )
     dvalue_dp_global: np.ndarray | None = None  # (B, p_dim) or (p_dim, )
@@ -377,9 +396,13 @@ def _solve_shared(
     # TODO: Cover case where we do not want to do a forward evaluation
     solver.solve()
 
+    if isinstance(solver, AcadosOcpBatchSolver):
+        for i, ocp_solver in enumerate(solver.ocp_solvers):
+            assert ocp_solver.get_cost() >= -1e-4, ocp_solver.get_cost()
+
     solve_stats = dict()
 
-    if isinstance(solver, AcadosOcpSolver):  #
+    if isinstance(solver, AcadosOcpSolver):
         solve_stats["sqp_iter"] = solver.get_stats("sqp_iter")
         solve_stats["qp_iter"] = solver.get_stats("qp_iter").sum()  # type:ignore
         solve_stats["time_tot"] = solver.get_stats("time_tot")
@@ -483,7 +506,7 @@ class MPC(ABC):
         discount_factor: float | None = None,
         default_init_state_fn: Callable[[MPCInput], MPCSingleState | MPCBatchedState]
         | None = None,
-        n_batch: int = 1,
+        n_batch: int = 256,
         export_directory: Path | None = None,
         export_directory_sensitivity: Path | None = None,
         throw_error_if_u0_is_outside_ocp_bounds: bool = True,
@@ -531,6 +554,8 @@ class MPC(ABC):
         self._discount_factor = discount_factor
         self._default_init_state_fn = default_init_state_fn
 
+        self.param_labels = SX_to_labels(self.ocp.model.p_global)
+
         # size of solver batch
         self.n_batch: int = n_batch
 
@@ -539,6 +564,7 @@ class MPC(ABC):
         )
 
         self.last_call_stats: dict = dict()
+        self.last_call_state: MPCSingleState | MPCBatchedState
 
         # constraints and cost functions
         self._h_fn = None
@@ -623,7 +649,7 @@ class MPC(ABC):
         """Return the default p_stagewise."""
         return (
             np.tile(self.ocp.parameter_values, (self.N + 1, 1))
-            if self.is_model_p_legal(self.ocp.model.p)
+            if self.is_model_p_legal(self.ocp_sensitivity.model.p)
             else None
         )
 
@@ -718,7 +744,7 @@ class MPC(ABC):
         """
 
         mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
-        mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
+        mpc_output = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
         return (
             mpc_output.V,
@@ -747,7 +773,7 @@ class MPC(ABC):
         mpc_input = MPCInput(
             x0=state, u0=action, parameters=MPCParameter(p_global=p_global)
         )
-        mpc_output, _ = self.__call__(mpc_input=mpc_input, dvdp=sens)
+        mpc_output = self.__call__(mpc_input=mpc_input, dvdp=sens)
 
         return (
             mpc_output.Q,
@@ -776,7 +802,7 @@ class MPC(ABC):
 
         mpc_input = MPCInput(x0=state, parameters=MPCParameter(p_global=p_global))
 
-        mpc_output, _ = self.__call__(
+        mpc_output = self.__call__(
             mpc_input=mpc_input, dudp=sens, use_adj_sens=use_adj_sens
         )
 
@@ -792,12 +818,13 @@ class MPC(ABC):
         dvdu: bool = False,
         dvdp: bool = False,
         use_adj_sens: bool = True,
-    ) -> tuple[MPCOutput, MPCSingleState | MPCBatchedState]:
+    ) -> MPCOutput:
         """
         Solve the OCP for the given initial state and parameters. If an mpc_state is given and the solver does not converge,
         AND the default_init_state_fn is not None, the solver will attempt another solve reinitialized with the default_init_state_fn
         (in the batched solve, only the non-converged samples will be reattempted to solve).
         NOTE: Information about this call is stored in the public member self.last_call_stats.
+        NOTE: The solution state of this call is stored in the public member self.last_call_state.
 
         Args:
             mpc_input: The input of the MPC controller.
@@ -810,12 +837,14 @@ class MPC(ABC):
             use_adj_sens: Whether to use adjoint sensitivity.
 
         Returns:
-            A tuple consisting of the output of the MPC controller, the iterate of the solver
-            and a dictionary containing statistics from the solve.
+            A collection of outputs from the MPC controller.
         """
 
-        if not mpc_input.is_batched():
-            return self._solve(
+        if mpc_input.is_batched() and mpc_input.x0.shape[0] == 1:
+            # Jasper (Todo): Quick fix, remove this when automatic proportional batch solving is allowed.
+            # undo the batched solve
+            mpc_input = mpc_input.get_sample(0)
+            mpc_output, mpc_state = self._solve(
                 mpc_input=mpc_input,
                 mpc_state=mpc_state,  # type: ignore
                 dudx=dudx,
@@ -826,7 +855,34 @@ class MPC(ABC):
                 use_adj_sens=use_adj_sens,
             )
 
-        return self._batch_solve(
+            # add the batch dimension back by iterating over the fields
+            def add_dim(value):
+                if isinstance(value, np.ndarray):
+                    return np.array([value])
+                return value
+
+            mpc_output = MPCOutput(
+                **{k: add_dim(v) for k, v in mpc_output._asdict().items()}
+            )
+
+            self.last_call_state = mpc_state
+            return mpc_output
+
+        if not mpc_input.is_batched():
+            mpc_output, mpc_state = self._solve(
+                mpc_input=mpc_input,
+                mpc_state=mpc_state,  # type: ignore
+                dudx=dudx,
+                dudp=dudp,
+                dvdx=dvdx,
+                dvdu=dvdu,
+                dvdp=dvdp,
+                use_adj_sens=use_adj_sens,
+            )
+            self.last_call_state = mpc_state
+            return mpc_output
+
+        mpc_output, mpc_state = self._batch_solve(
             mpc_input=mpc_input,
             mpc_state=mpc_state,  # type: ignore
             dudx=dudx,
@@ -836,6 +892,9 @@ class MPC(ABC):
             dvdp=dvdp,
             use_adj_sens=use_adj_sens,
         )
+        self.last_call_state = mpc_state
+
+        return mpc_output
 
     def _solve(
         self,

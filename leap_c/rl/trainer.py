@@ -55,7 +55,7 @@ class BaseTrainerConfig:
     device: str
     save_directory_path: str
 
-    render_mode: str | None  # rgb_array or human
+    render_mode: str | None = "rgb_array"  # rgb_array or human
     video_directory_path: str | None = None
     render_interval_exploration: int
     render_interval_validation: int

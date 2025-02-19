@@ -10,6 +10,7 @@ c_generated_code*
 acados_ocp_nlp.json
 
 .vscode
+.idea
 output
 
 # Byte-compiled / optimized / DLL files

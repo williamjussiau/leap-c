@@ -1,8 +1,8 @@
 import atexit
 import os
+import random
 import shutil
 from pathlib import Path
-import random
 from tempfile import mkdtemp
 from typing import Any
 
@@ -31,9 +31,24 @@ def create_dir_if_not_exists(directory):
         os.mkdir(directory)
 
 
-def collect_status(status: torch.Tensor) -> list:
-    """Count how many occurrences of the respective status number there are in the given tensor."""
-    return [(status == i).sum().item() for i in range(5)]
+def collect_status(status: np.ndarray | torch.Tensor | list) -> list:
+    """Count how many occurrences of the respective status number are given."""
+    if isinstance(status, torch.Tensor) or isinstance(status, np.ndarray):
+        return [(status == i).sum().item() for i in range(5)]
+    elif isinstance(status, list):
+        return [status.count(i) for i in range(5)]
+    elif isinstance(status, int):
+        template = [0, 0, 0, 0, 0]
+        template[status] = 1
+        return template
+
+
+def sum_up_dict(d_in, d_sum):
+    for k, v in d_in.items():
+        if k in d_sum:
+            d_sum[k] += v
+        else:
+            d_sum[k] = v
 
 
 def put_each_index_of_tensor_as_entry_into(

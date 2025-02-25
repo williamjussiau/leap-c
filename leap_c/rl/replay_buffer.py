@@ -1,10 +1,12 @@
 import collections
 import random
+from enum import Enum
 from typing import Any
 
 import torch
-from leap_c.collate import create_collate_fn_map, pytree_tensor_to
 from torch.utils.data._utils.collate import collate
+
+from leap_c.collate import create_collate_fn_map, pytree_tensor_to
 
 
 class ReplayBuffer:
@@ -21,6 +23,7 @@ class ReplayBuffer:
             device: The device to which all sampled tensors will be cast.
             collate_fn_map: The collate function map that informs the buffer how to form batches.
             tensor_dtype: The data type to which the tensors in the observation will be cast.
+            input_transformation: A function that transforms the data before it is put into the buffer.
         """
         self.buffer = collections.deque(maxlen=buffer_limit)
         self.device = device
@@ -56,3 +59,35 @@ class ReplayBuffer:
 
     def __len__(self):
         return len(self.buffer)
+
+
+class InitializationStrategy(Enum):
+    PREVIOUS = 0
+    DEFAULTINIT = 1
+    RELOAD = 2
+    RELOADWRITEBACK = 3
+    NN = 4
+
+
+# TODO finish when its time
+# class ReplayBufferReloadWriteback(ReplayBuffer):
+#     """This implements the initialization strategy where the previous solution is reloaded,
+#     but samples in the buffer can be updated."""
+
+#     def __init__(
+#         self, buffer_limit: int, device: str, tensor_dtype: torch.dtype = torch.float32
+#     ):
+#         super().__init__(buffer_limit, device, tensor_dtype)
+#         self.id = 0
+#         self.lookup: dict[int, Any] = dict()
+
+#     def rollout_state(self, input: MPCInput, state: MPCSingleState) -> MPCSingleState:
+#         return state
+
+#     def put(self, data: Any):
+#         """The same as the put of the usual ReplayBuffer, but also"""
+#         # append id for lookup later
+#         self.buffer.append(data)
+
+#     def writeback(self, id: int, data: Any):
+#         self.lookup[id] = data

@@ -401,7 +401,6 @@ def _solve_shared(
         throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
     )
     solver.solve()
-
     if isinstance(solver, AcadosOcpBatchSolver):
         for i, ocp_solver in enumerate(solver.ocp_solvers):
             assert ocp_solver.get_cost() >= -1e-4, ocp_solver.get_cost()
@@ -412,22 +411,21 @@ def _solve_shared(
         solve_stats["sqp_iter"] = solver.get_stats("sqp_iter")
         solve_stats["qp_iter"] = solver.get_stats("qp_iter").sum()  # type:ignore
         solve_stats["time_tot"] = solver.get_stats("time_tot")
-        if not use_backup_for_first_solve:  # Reattempt with backup
-            if solver.status != 0:
-                initialize_ocp_solver(
-                    ocp_solver=solver,
-                    mpc_input=mpc_input,
-                    ocp_iterate=backup_fn(mpc_input),  # type:ignore
-                    set_params=False,
-                    throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
-                )
-                solver.solve()
-                solve_stats["first_solve_status"] = [solver.status]
-            else:
-                solve_stats["first_solve_status"] = 0
+        if (
+            not use_backup_for_first_solve and solver.status != 0
+        ):  # Reattempt with backup
+            initialize_ocp_solver(
+                ocp_solver=solver,
+                mpc_input=mpc_input,
+                ocp_iterate=backup_fn(mpc_input),  # type:ignore
+                set_params=False,
+                throw_error_if_u0_is_outside_ocp_bounds=throw_error_if_u0_is_outside_ocp_bounds,
+            )
+            solver.solve()
             solve_stats["sqp_iter"] += solver.get_stats("sqp_iter")
             solve_stats["qp_iter"] += solver.get_stats("qp_iter").sum()  # type:ignore
             solve_stats["time_tot"] += solver.get_stats("time_tot")
+        solve_stats["first_solve_status"] = [solver.status]
 
     elif isinstance(solver, AcadosOcpBatchSolver):
         status_batch = []
@@ -502,6 +500,20 @@ def _solve_shared(
     return solve_stats
 
 
+def turn_on_warmstart(acados_ocp: AcadosOcp):
+    if not (
+        acados_ocp.solver_options.qp_solver_warm_start
+        and acados_ocp.solver_options.nlp_solver_warm_start_first_qp
+        and acados_ocp.solver_options.nlp_solver_warm_start_first_qp_from_nlp
+    ):
+        print(
+            "WARNING: Warmstart is not enabled. We will enable it for our initialization strategies to work properly."
+        )
+    acados_ocp.solver_options.qp_solver_warm_start = 0
+    acados_ocp.solver_options.nlp_solver_warm_start_first_qp = True
+    acados_ocp.solver_options.nlp_solver_warm_start_first_qp_from_nlp = True
+
+
 class MPC(ABC):
     """MPC abstract base class."""
 
@@ -550,6 +562,9 @@ class MPC(ABC):
             set_standard_sensitivity_options(self.ocp_sensitivity)
         else:
             self.ocp_sensitivity = ocp_sensitivity
+
+        turn_on_warmstart(self.ocp)
+        # turn_on_warmstart(self.ocp_sensitivity)
 
         # path management
         self.afm = AcadosFileManager(export_directory)

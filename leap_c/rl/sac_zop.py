@@ -234,7 +234,9 @@ class SacZopTrainer(Trainer):
             self.report_stats("train_trajectory", {"action": action, "param": param})
             self.report_stats("train_policy_rollout", pi_output.stats)
 
+
             obs_prime, reward, is_terminated, is_truncated, info = self.train_env.step(action)
+  
             if "episode" in info:
                 self.report_stats("train", info["episode"])
 

@@ -1,7 +1,6 @@
 """Provides a trainer for a Soft Actor-Critic algorithm that uses a differentiable MPC
 layer for the policy network."""
 
-from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterator, NamedTuple
@@ -12,9 +11,9 @@ import torch
 import torch.nn as nn
 
 from leap_c.mpc import MpcBatchedState
+from leap_c.nn.gaussian import SquashedGaussian
 from leap_c.nn.mlp import MLP, MlpConfig
 from leap_c.nn.modules import MpcSolutionModule
-from leap_c.nn.gaussian import SquashedGaussian
 from leap_c.registry import register_trainer
 from leap_c.rl.replay_buffer import ReplayBuffer
 from leap_c.rl.sac import SacCritic
@@ -120,10 +119,13 @@ class MpcSacActor(nn.Module):
         self.mpc: MpcSolutionModule = task.mpc  # type:ignore
         self.prepare_mpc_input = task.prepare_mpc_input
         self.prepare_mpc_state = prepare_mpc_state
+        self.actual_used_mpc_state = None
 
         self.squashed_gaussian = SquashedGaussian(param_space)  # type:ignore
 
-    def forward(self, obs, mpc_state: MpcBatchedState, deterministic=False):
+    def forward(
+        self, obs, mpc_state: MpcBatchedState, deterministic=False
+    ) -> SacFopActorOutput:
         e = self.extractor(obs)
         mean, log_std = self.mlp(e)
 
@@ -138,6 +140,7 @@ class MpcSacActor(nn.Module):
         # TODO: We have to catch and probably replace the state_solution somewhere,
         #       if its not a converged solution
         mpc_output, state_solution, mpc_stats = self.mpc(mpc_input, mpc_state)
+        self.actual_used_mpc_state = mpc_state
 
         return SacFopActorOutput(
             param,

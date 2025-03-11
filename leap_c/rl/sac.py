@@ -7,8 +7,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-from leap_c.nn.mlp import MLP, MlpConfig
 from leap_c.nn.gaussian import SquashedGaussian
+from leap_c.nn.mlp import MLP, MlpConfig
 from leap_c.registry import register_trainer
 from leap_c.rl.replay_buffer import ReplayBuffer
 from leap_c.task import Task
@@ -234,7 +234,7 @@ class SacTrainer(Trainer):
 
                 # update actor
                 q_pi = torch.cat(self.q(o, a_pi), dim=1)
-                min_q_pi = torch.min(q_pi, dim=1).values
+                min_q_pi = torch.min(q_pi, dim=1, keepdim=True).values
                 pi_loss = (alpha * log_p - min_q_pi).mean()
 
                 self.pi_optim.zero_grad()

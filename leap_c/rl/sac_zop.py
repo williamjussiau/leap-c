@@ -11,9 +11,9 @@ import torch
 import torch.nn as nn
 
 from leap_c.mpc import MpcBatchedState
+from leap_c.nn.gaussian import SquashedGaussian
 from leap_c.nn.mlp import MLP, MlpConfig
 from leap_c.nn.modules import MpcSolutionModule
-from leap_c.nn.gaussian import SquashedGaussian
 from leap_c.registry import register_trainer
 from leap_c.rl.replay_buffer import ReplayBuffer
 from leap_c.task import Task
@@ -239,9 +239,10 @@ class SacZopTrainer(Trainer):
             self.report_stats("train_trajectory", {"action": action, "param": param})
             self.report_stats("train_policy_rollout", pi_output.stats)
 
+            obs_prime, reward, is_terminated, is_truncated, info = self.train_env.step(
+                action
+            )
 
-            obs_prime, reward, is_terminated, is_truncated, info = self.train_env.step(action)
-  
             if "episode" in info:
                 self.report_stats("train", info["episode"])
 
@@ -308,7 +309,7 @@ class SacZopTrainer(Trainer):
 
                 # update actor
                 q_pi = torch.cat(self.q(o, a_pi), dim=1)
-                min_q_pi = torch.min(q_pi, dim=1).values
+                min_q_pi = torch.min(q_pi, dim=1, keepdim=True).values
                 pi_loss = (alpha * log_p - min_q_pi).mean()
 
                 self.pi_optim.zero_grad()

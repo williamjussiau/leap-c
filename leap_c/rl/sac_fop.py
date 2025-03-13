@@ -291,7 +291,6 @@ class SacFopTrainer(Trainer):
 
                     # add entropy
                     factor = self.cfg.sac.entropy_reward_bonus / self.entropy_norm
-                    print("factor", factor)
                     q_target = q_target - alpha * pi_o_prime.log_prob * factor
 
                     target = (
@@ -325,7 +324,7 @@ class SacFopTrainer(Trainer):
                         "alpha": alpha,
                         "q": q.mean().item(),
                         "q_target": target.mean().item(),
-                        "masked_samples": (pi_o.status != 0).float().mean().item(),
+                        "masked_samples_perc": 1 - mask_status.float().mean().item(),
                         "entropy": -log_p.mean().item(),
                     }
                     self.report_stats("loss", loss_stats, self.state.step + 1)

@@ -1,3 +1,6 @@
 [submodule "external/acados"]
 	path = external/acados
 	url = git@github.com:acados/acados.git
+[submodule "external/FlowControl"]
+	path = external/FlowControl
+	url = https://github.com/williamjussiau/FlowControl.git

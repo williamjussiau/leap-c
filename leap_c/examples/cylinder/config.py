@@ -63,6 +63,7 @@ def default_ss():
 
 @dataclass(kw_only=True)
 class CylinderParams:
+<<<<<<< HEAD
     p: float  # single real pole of Laguerre basis, float
     theta: np.array  # coordinates of Q in Laguerre basis, list[float]
     # G: control.StateSpace
@@ -71,6 +72,7 @@ class CylinderParams:
 
 def make_default_cylinder_params(stagewise: bool = False) -> CylinderParams:
     """Returns a CylinderParams instance with default parameter values."""
+<<<<<<< HEAD
     p = 1.0
     theta = np.zeros(
         DEFAULT_LAGUERRE_EXPANSION_SIZE,
@@ -112,3 +114,6 @@ def collate_flowcontrol_ctx(
     return FlowControlCtx(
         controller_order=controller_order_batch, controller_state=controller_state_batch
     )
+=======
+    return CylinderParams(Re=100, p=1, theta=[0.0])
+>>>>>>> fcfc07c (Redefine CylinderParams to include Controller parameters)

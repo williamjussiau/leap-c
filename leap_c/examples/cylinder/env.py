@@ -1,7 +1,15 @@
+<<<<<<< HEAD
 from datetime import datetime
 from pathlib import Path
 
 import cylinder_renderer
+=======
+import logging
+import time
+from pathlib import Path
+from typing import Optional
+
+>>>>>>> 2b05b52 (Cylinder environment: working version)
 import dolfin
 import flowcontrol.flowsolverparameters as flowsolverparameters
 import gymnasium as gym
@@ -9,8 +17,15 @@ import numpy as np
 import utils.utils_flowsolver as flu
 from examples.cylinder.cylinderflowsolver import CylinderFlowSolver
 from flowcontrol.actuator import ActuatorBCParabolicV
+<<<<<<< HEAD
 from flowcontrol.sensor import SENSOR_TYPE, SensorPoint
 from gymnasium import spaces
+=======
+from flowcontrol.controller import Controller
+from flowcontrol.sensor import SENSOR_TYPE, SensorPoint
+from gymnasium import spaces
+from gymnasium.envs.classic_control import utils as gym_utils
+>>>>>>> 2b05b52 (Cylinder environment: working version)
 
 
 class CylinderEnv(gym.Env):
@@ -52,6 +67,7 @@ class CylinderEnv(gym.Env):
     def __init__(
         self,
         render_mode: str | None = None,
+<<<<<<< HEAD
         render_method: str = "project",
         Re: float = 100,
         Tf: float = 10,
@@ -60,6 +76,14 @@ class CylinderEnv(gym.Env):
         self.Re = Re
         self.umax = 2
         self.umin = -self.umax
+=======
+        Re: float = 100,
+        Tf: float = 1,
+        save_every: int = 0,
+    ):
+        self.Re = Re
+        self.umax = 2
+>>>>>>> 2b05b52 (Cylinder environment: working version)
 
         # FlowSolver
         dolfin.set_log_level(dolfin.LogLevel.INFO)  # DEBUG TRACE PROGRESS INFO
@@ -68,11 +92,27 @@ class CylinderEnv(gym.Env):
         )
         initialize_flowsolver(self.flowsolver)
 
+<<<<<<< HEAD
         # Action, Observation...
         self.action_space = spaces.Box(low=self.umin, high=self.umax, dtype=np.float32)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32
         )
+=======
+        # Action & observation spaces bounds
+        # high = np.array(
+        #     [
+        #         self.x_threshold * 2,
+        #         2 * np.pi,
+        #         np.finfo(np.float32).max,
+        #         np.finfo(np.float32).max,
+        #     ],
+        #     dtype=np.float32,
+        # )
+
+        self.action_space = spaces.Box(-self.umax, self.umax, dtype=np.float32)
+        self.observation_space = spaces.Box(-1, 1, dtype=np.float32)  ########### TODO
+>>>>>>> 2b05b52 (Cylinder environment: working version)
 
         self.reset_needed = True
         self.t = 0
@@ -80,23 +120,41 @@ class CylinderEnv(gym.Env):
         self.x = None
 
         # For rendering
+<<<<<<< HEAD
         self.check_render_mode(render_mode=render_mode)
         self.renderer = cylinder_renderer.CylinderRenderer(
             self.flowsolver, render_method=render_method, render_mode=render_mode
         )
         self.render_mode = render_mode
+=======
+        if not (render_mode is None or render_mode in self.metadata["render_modes"]):
+            raise ValueError(
+                f"render_mode must be one of {self.metadata['render_modes']}"
+            )
+        self.render_mode = render_mode
+        # self.pos_trajectory = None
+        # self.pole_end_trajectory = None
+        # self.x_trajectory = None
+        self.screen_width = 600
+        self.screen_height = 400
+        self.window = None
+        self.clock = None
+>>>>>>> 2b05b52 (Cylinder environment: working version)
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Execute one step of the flow dynamics."""
         if self.reset_needed:
             raise Exception("Call reset before using the step method.")
 
+<<<<<<< HEAD
         # saturation: this form prefered over minmax for some reason
         if action > self.umax:
             action = self.umax
         if action < self.umin:
             action = self.umin
 
+=======
+>>>>>>> 2b05b52 (Cylinder environment: working version)
         y = self.flowsolver.step(
             u_ctrl=np.repeat(action, repeats=2, axis=0)
         )  # 1D action into 2D to feed 2 actuators
@@ -105,15 +163,27 @@ class CylinderEnv(gym.Env):
         self.x_trajectory.append(self.x)  # type: ignore
         self.t = self.flowsolver.t
 
+<<<<<<< HEAD
         r = -np.linalg.norm(y) * 1 / np.sqrt(self.max_time)
         # bigger reward when smaller y norm
+=======
+        r = -np.linalg.norm(y)  # bigger reward when smaller y norm
+>>>>>>> 2b05b52 (Cylinder environment: working version)
 
         # W: Stopping criteria?
         term = False
         trunc = False
         info = {}
+<<<<<<< HEAD
 
         if self.t >= self.max_time:
+=======
+        # if self.x[0] > self.x_threshold or self.x[0] < -self.x_threshold:
+        #     term = True  # Just terminating should be enough punishment when reward is positive
+        #     info = {"task": {"violation": True, "success": False}}
+        if self.t > self.max_time:
+            # check if the pole is upright in the last 10 steps
+>>>>>>> 2b05b52 (Cylinder environment: working version)
             if len(self.x_trajectory) >= 10:
                 success = all(
                     np.linalg.norm(self.x_trajectory[i]) < 0.1 for i in range(-10, 0)
@@ -123,11 +193,14 @@ class CylinderEnv(gym.Env):
 
             info = {"task": {"violation": False, "success": success}}
             trunc = True
+<<<<<<< HEAD
 
         if np.isnan(r):
             info = {"task": {"violation": True, "success": False}}
             trunc = True
 
+=======
+>>>>>>> 2b05b52 (Cylinder environment: working version)
         self.reset_needed = trunc or term
 
         return self.x, r, term, trunc, info
@@ -135,6 +208,10 @@ class CylinderEnv(gym.Env):
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
     ) -> tuple[np.ndarray, dict]:  # type: ignore
+<<<<<<< HEAD
+=======
+        """W: Most likely resets environment?"""
+>>>>>>> 2b05b52 (Cylinder environment: working version)
         if seed is not None:
             super().reset(seed=seed)
             self.observation_space.seed(seed)
@@ -145,6 +222,7 @@ class CylinderEnv(gym.Env):
         self.flowsolver.initialize_time_stepping(
             ic=None
         )  # initial state = base flow + ic
+<<<<<<< HEAD
         # TODO initial state on attractor, rand phase in [0,2pi]
         self.flowsolver.paths["timeseries"] = (
             self.flowsolver.params_save.path_out
@@ -154,11 +232,18 @@ class CylinderEnv(gym.Env):
         # reset the rest
         self.t = 0
         self.x = self.flowsolver.y_meas
+=======
+
+        # reset the rest
+        self.t = 0
+        self.x = self.flowsolver.y_meas  ########### TODO: what is state
+>>>>>>> 2b05b52 (Cylinder environment: working version)
         self.reset_needed = False
 
         self.x_trajectory = []
         return self.x, {}
 
+<<<<<<< HEAD
     ####################################################################################
     ####################################################################################
     def render(self):
@@ -176,6 +261,34 @@ class CylinderEnv(gym.Env):
 
     ####################################################################################
     ####################################################################################
+=======
+    # def init_state(self, options: Optional[dict] = None) -> np.ndarray:
+    #     return np.array([0.0, np.pi, 0.0, 0.0], dtype=np.float32)
+
+    # def include_this_state_trajectory_to_rendering(self, state_trajectory: np.ndarray):
+    #     """Meant for setting a state trajectory for rendering.
+    #     If a state trajectory is not set before the next call of render,
+    #     the rendering will not render a state trajectory.
+
+    #     NOTE: The record_video wrapper of gymnasium will call render() AFTER every step.
+    #     This means if you use the wrapper,
+    #     make a step,
+    #     calculate action and state trajectory from the observations,
+    #     and input the state trajectory with this function before taking the next step,
+    #     the picture being rendered after this next step will be showing the trajectory planned BEFORE DOING the step.
+    #     """
+    #     self.pos_trajectory = []
+    #     # self.pole_end_trajectory = []
+    #     for x in state_trajectory:
+    #         self.pos_trajectory.append(x[0])
+    #         # self.pole_end_trajectory.append(self.calc_pole_end(x[0], x[1], self.length))
+
+    def render(self):
+        pass
+
+    def close(self):
+        pass
+>>>>>>> 2b05b52 (Cylinder environment: working version)
 
 
 def instantiate_flowsolver(Re, Tf, save_every):
@@ -240,7 +353,11 @@ def instantiate_flowsolver(Re, Tf, save_every):
         params_restart=params_restart,
         params_control=params_control,
         params_ic=params_ic,
+<<<<<<< HEAD
         verbose=500,
+=======
+        verbose=1,
+>>>>>>> 2b05b52 (Cylinder environment: working version)
     )
 
     return fs
@@ -259,5 +376,68 @@ def initialize_flowsolver(fs: CylinderFlowSolver):
         # Expected:
         # Newton iteration 4: r (abs) = 6.901e-14 (tol = 1.000e-10) r (rel) = 1.109e-11 (tol = 1.000e-09)
 
+<<<<<<< HEAD
     # TODO: read attractor snapshot for init
     fs.initialize_time_stepping(ic=None)  # or ic=dolfin.Function(fs.W)
+=======
+    # TODO: read attractor snapshot
+    fs.initialize_time_stepping(ic=None)  # or ic=dolfin.Function(fs.W)
+
+
+# class CylinderStabilizationEnv(CylinderEnv):
+#     """What is that"""
+
+#     def init_state(self, options: Optional[dict] = None) -> np.ndarray:
+#         low, high = gym_utils.maybe_parse_reset_bounds(
+#             options,
+#             -0.05,
+#             0.05,  # default low
+#         )  # default high
+#         return self.np_random.uniform(low=low, high=high, size=(4,))
+
+
+if __name__ == "__main__":
+    print("Instantiate CylinderFlowSolver.")
+    env = CylinderEnv(render_mode="human", Re=100, Tf=0.05, save_every=0)
+
+    print("Reset CylinderFlowSolver.")
+    obs, info = env.reset(seed=44)
+
+    terminated = False
+    truncated = False
+    total_reward = 0
+    # env.render()
+
+    for i in range(100):  # Increase steps for longer visualization
+        action = env.action_space.sample()
+
+        # goal_dir = env.goal.pos - obs[:2]
+        # goal_dir_norm = np.linalg.norm(goal_dir)
+        # if goal_dir_norm > 1e-3:
+        #     proportional_force = (goal_dir / goal_dir_norm) * env.Fmax
+        # else:
+        #     proportional_force = np.zeros(2)
+
+        obs, reward, terminated, truncated, info = env.step(action)
+        total_reward += reward
+
+        # print(f"Current action: {action}")
+
+        #     env.render()
+
+        if terminated or truncated:
+            print(f"Episode finished after {i + 1} timesteps.")
+            print(f"Termination: {terminated}, Truncation: {truncated}")
+            print(f"Final state (pos): {obs}")
+            # print(f"Goal position: {env.goal.pos}")
+            # print(f"Distance to goal: {np.linalg.norm(obs[:2] - env.goal.pos):.3f}")
+            print(f"Total reward: {total_reward:.2f}")
+            if env.render_mode == "human":
+                pass
+                # plt.pause(5.0)  # Increased pause to see final state
+            break  # Stop after one episode for this example
+
+    # # Close the environment rendering window
+    # env.close()
+    print("Environment closed.")
+>>>>>>> 2b05b52 (Cylinder environment: working version)

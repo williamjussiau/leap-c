@@ -1,19 +1,13 @@
-import logging
-import time
 from pathlib import Path
-from typing import Optional
 
 import dolfin
 import flowcontrol.flowsolverparameters as flowsolverparameters
 import gymnasium as gym
 import numpy as np
-import utils.utils_flowsolver as flu
 from examples.cylinder.cylinderflowsolver import CylinderFlowSolver
 from flowcontrol.actuator import ActuatorBCParabolicV
-from flowcontrol.controller import Controller
 from flowcontrol.sensor import SENSOR_TYPE, SensorPoint
 from gymnasium import spaces
-from gymnasium.envs.classic_control import utils as gym_utils
 
 
 class CylinderEnv(gym.Env):

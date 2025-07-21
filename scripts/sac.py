@@ -1,47 +1,49 @@
 """Main script to run experiments."""
+
 import datetime
 from argparse import ArgumentParser
 from pathlib import Path
 
 from leap_c.run import main
-from leap_c.torch.rl import SacBaseConfig
 
+# from leap_c.torch.rl import SacBaseConfig
+from leap_c.torch.rl.sac_zop import SacBaseConfig
 
 parser = ArgumentParser()
 parser.add_argument("--output_path", type=Path, default=None)
-parser.add_argument("--task", type=str, default="point_mass")
-parser.add_argument("--trainer", type=str, default="sac_fop")
+parser.add_argument("--task", type=str, default="point_mass_easy")
+parser.add_argument("--trainer", type=str, default="sac_zop")  # original: fop
 parser.add_argument("--device", type=str, default="cpu")
 parser.add_argument("--seed", type=int, default=0)
 args = parser.parse_args()
 
 cfg = SacBaseConfig()
-cfg.train.steps = 1000000
+cfg.train.steps = 1_000_000
 cfg.train.start = 0
 cfg.val.interval = 10000
 cfg.val.num_rollouts = 10
 cfg.val.deterministic = True
-cfg.val.ckpt_modus = 'best'
+cfg.val.ckpt_modus = "best"
 cfg.val.num_render_rollouts = 1
-cfg.val.render_mode = 'rgb_array'
+cfg.val.render_mode = "rgb_array"
 cfg.val.render_deterministic = True
-cfg.val.report_score = 'cum'
+cfg.val.report_score = "cum"
 cfg.log.verbose = True
 cfg.log.interval = 1000
-cfg.log.window = 10000
+cfg.log.window = 10_000
 cfg.log.csv_logger = True
-cfg.log.tensorboard_logger = True
+cfg.log.tensorboard_logger = False
 cfg.log.wandb_logger = False
 cfg.log.wandb_init_kwargs = {}
 cfg.seed = 0
 cfg.sac.critic_mlp.hidden_dims = (256, 256, 256)
-cfg.sac.critic_mlp.activation = 'relu'
-cfg.sac.critic_mlp.weight_init = 'orthogonal'
+cfg.sac.critic_mlp.activation = "relu"
+cfg.sac.critic_mlp.weight_init = "orthogonal"
 cfg.sac.actor_mlp.hidden_dims = (256, 256, 256)
-cfg.sac.actor_mlp.activation = 'relu'
-cfg.sac.actor_mlp.weight_init = 'orthogonal'
+cfg.sac.actor_mlp.activation = "relu"
+cfg.sac.actor_mlp.weight_init = "orthogonal"
 cfg.sac.batch_size = 64
-cfg.sac.buffer_size = 1000000
+cfg.sac.buffer_size = 1_000_000
 cfg.sac.gamma = 0.99
 cfg.sac.tau = 0.005
 cfg.sac.soft_update_freq = 1

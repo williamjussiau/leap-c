@@ -1,82 +1,109 @@
-from dataclasses import asdict
 from typing import Any, Optional
 
-import control
 import flowcontrol.controller as flowcon
 import gymnasium as gym
 import numpy as np
 import torch
-import utils.youla_utils as yu
+import utils.youla_utils as flowconyu
 
 from leap_c.controller import ParameterizedController
-from leap_c.examples.cylinder.config import CylinderParams, make_default_cylinder_param
+from leap_c.examples.cylinder.config import (
+    DEFAULT_LAGUERRE_EXPANSION_SIZE,
+    CylinderCfg,
+    CylinderParams,
+    FlowControlCtx,
+    YoulaControllerCfg,
+    collate_flowcontrol_ctx,
+    make_default_cylinder_params,
+)
 
 
 class CylinderController(ParameterizedController):
-    """
-    LTI controller for the flow past a cylinder
-    Youla parametrization with Laguerre basis expansion
-    """
+    collate_fn_map = {FlowControlCtx: collate_flowcontrol_ctx}
 
     def __init__(
         self,
         params: Optional[CylinderParams] = None,
-        G: Optional[control.StateSpace] = None,
-        K0: Optional[flowcon.Controller] = None,
+        cylinderConfig: Optional[CylinderCfg] = None,
+        youlaControllerConfig: Optional[YoulaControllerCfg] = None,
+        N_expansion: int = DEFAULT_LAGUERRE_EXPANSION_SIZE,
+        stagewise: bool = False,
     ):
         """
         Args:
-            params [Cylinderparams]: p, theta for Youla parametrization
-            G [control.StateSpace]: ROM of linearised flow
-            K0 [flowcontrol.controller.Controller]: initial controller stabilizing G
-            N_expansion [int]: size of Laguerre expansion
+            params: A dict with the parameters of the ocp, together with their default values.
+                For a description of the parameters, see the docstring of the class.
+            G
+            K0
+            N_expansion
         """
         super().__init__()
-        self.params = make_default_cylinder_param() if params is None else params
-        # tuple_params = tuple(asdict(self.params).values())
-
-        self.G = G
-        self.K0 = K0
-        # Make Youla controller as flowcon.Controller
-        Ky = yu.youla_laguerre(
-            G,
-            K0,
-            p=params.p,
-            theta=params.theta,
+        self.params = (
+            make_default_cylinder_params(stagewise=stagewise)
+            if params is None
+            else params
         )
-        self.Ky = flowcon.Controller.from_matrices(Ky.A, Ky.B, Ky.C, Ky.D, x0=None)
-        # W: here, p and theta are most likely the parameters. That is what we would like to tune!
-        # W: (to self) add log-transform for p and scaling for theta. Maybe it can go in default param
+
+        if youlaControllerConfig is None:
+            youlaControllerConfig = YoulaControllerCfg()
+
+        if cylinderConfig is None:
+            cylinderConfig = CylinderCfg()
+
+        self.youlaControllerConfig = youlaControllerConfig
+        self.cylinderConfig = cylinderConfig
+        self.controller_order = (
+            2 * self.youlaControllerConfig.K0.nstates
+            + self.youlaControllerConfig.G.nstates
+            + N_expansion
+        )
+        self.N_expansion = N_expansion
 
     def forward(self, obs, param, ctx=None) -> tuple[Any, torch.Tensor]:
-        # x0 = torch.as_tensor(obs, dtype=torch.float64)
-        # p_global = torch.as_tensor(param, dtype=torch.float64)
-        # ctx, u0, x, u, value = self.diff_mpc(
-        #     x0.unsqueeze(0), p_global=p_global.unsqueeze(0), ctx=ctx
-        # )
-        u0 = self.Ky.step(
-            y=obs[0], dt=0.005
-        )  # index depends on where is feedback sensor
-        # W: get dt from somewhere
-        # W: how is the internal state self.Ky.x managed? Is it reset sometimes? For a LTI controller,
-        # it needs to be kept during a single simulation, and reset between simulations
-        # W: there is also a formulation using convolutions
-        ctx = None
+        # No batch
+        assert obs.shape[0] == param.shape[0] == 1
+
+        if ctx is None:
+            ctx = FlowControlCtx.default_flowcontrol_context(
+                controller_order=self.controller_order
+            )
+
+        # here: log-transform p if necessary TODO
+        Ky = flowconyu.youla_laguerre(
+            G=self.youlaControllerConfig.G,
+            K0=self.youlaControllerConfig.K0,
+            p=self.params.p,
+            theta=self.params.theta,
+        )
+        Ky = flowcon.Controller.from_matrices(
+            Ky.A, Ky.B, Ky.C, Ky.D, x0=ctx.controller_state
+        )
+
+        # no batch yet
+        # index depends on where is feedback sensor
+        u0 = Ky.step(y=np.asarray(obs[0, 0]), dt=self.cylinderConfig.dt)
+        ctx = FlowControlCtx(
+            controller_order=self.controller_order, controller_state=Ky.x
+        )
+
         return ctx, u0
 
-    def jacobian_action_param(self, ctx) -> np.ndarray:
-        # W: what is that
-        return self.diff_mpc.sensitivity(ctx, field_name="du0_dp_global")
+    # def jacobian_action_param(self, ctx) -> np.ndarray:
+    #     return self.diff_mpc.sensitivity(ctx, field_name="du0_dp_global")
+    ## keep unimplemented for now
 
+    @property
     def param_space(self) -> gym.Space:
-        # TODO: can't determine the param space because it depends on the learnable parameters
-        # we need to define boundaries for every parameter and based on that create a gym.Space
-        # W: what
-        raise NotImplementedError
-
-    def default_param(self) -> np.ndarray:
-        # W: I assume default Controller parameters? What is default? Initial value?
-        # If yes, p=1, theta=zeros
-        return np.concatenate(
-            [asdict(self.params)[p].flatten() for p in self.learnable_params]
+        # TODO scaling of theta here
+        low = -1.0 * np.ones(
+            1 + self.N_expansion,
         )
+        high = 1.0 * np.ones(
+            1 + self.N_expansion,  # size param here
+        )
+        return gym.spaces.Box(low=low, high=high, dtype=np.float64)  # type:ignore
+
+    @property
+    def default_param(self) -> np.ndarray:
+        defpar = np.concatenate((np.array([1.0]), np.zeros(self.N_expansion)), axis=0)
+        return defpar

@@ -118,7 +118,7 @@ class CylinderEnv(gym.Env):
         # if self.x[0] > self.x_threshold or self.x[0] < -self.x_threshold:
         #     term = True  # Just terminating should be enough punishment when reward is positive
         #     info = {"task": {"violation": True, "success": False}}
-        if self.t > self.max_time:
+        if self.t >= self.max_time:
             # check if the pole is upright in the last 10 steps
             if len(self.x_trajectory) >= 10:
                 success = all(
@@ -155,27 +155,6 @@ class CylinderEnv(gym.Env):
 
         self.x_trajectory = []
         return self.x, {}
-
-    # def init_state(self, options: Optional[dict] = None) -> np.ndarray:
-    #     return np.array([0.0, np.pi, 0.0, 0.0], dtype=np.float32)
-
-    # def include_this_state_trajectory_to_rendering(self, state_trajectory: np.ndarray):
-    #     """Meant for setting a state trajectory for rendering.
-    #     If a state trajectory is not set before the next call of render,
-    #     the rendering will not render a state trajectory.
-
-    #     NOTE: The record_video wrapper of gymnasium will call render() AFTER every step.
-    #     This means if you use the wrapper,
-    #     make a step,
-    #     calculate action and state trajectory from the observations,
-    #     and input the state trajectory with this function before taking the next step,
-    #     the picture being rendered after this next step will be showing the trajectory planned BEFORE DOING the step.
-    #     """
-    #     self.pos_trajectory = []
-    #     # self.pole_end_trajectory = []
-    #     for x in state_trajectory:
-    #         self.pos_trajectory.append(x[0])
-    #         # self.pole_end_trajectory.append(self.calc_pole_end(x[0], x[1], self.length))
 
     def render(self):
         pass
@@ -265,20 +244,8 @@ def initialize_flowsolver(fs: CylinderFlowSolver):
         # Expected:
         # Newton iteration 4: r (abs) = 6.901e-14 (tol = 1.000e-10) r (rel) = 1.109e-11 (tol = 1.000e-09)
 
-    # TODO: read attractor snapshot
+    # TODO: read attractor snapshot for init
     fs.initialize_time_stepping(ic=None)  # or ic=dolfin.Function(fs.W)
-
-
-# class CylinderStabilizationEnv(CylinderEnv):
-#     """What is that"""
-
-#     def init_state(self, options: Optional[dict] = None) -> np.ndarray:
-#         low, high = gym_utils.maybe_parse_reset_bounds(
-#             options,
-#             -0.05,
-#             0.05,  # default low
-#         )  # default high
-#         return self.np_random.uniform(low=low, high=high, size=(4,))
 
 
 if __name__ == "__main__":
@@ -296,26 +263,15 @@ if __name__ == "__main__":
     for i in range(100):  # Increase steps for longer visualization
         action = env.action_space.sample()
 
-        # goal_dir = env.goal.pos - obs[:2]
-        # goal_dir_norm = np.linalg.norm(goal_dir)
-        # if goal_dir_norm > 1e-3:
-        #     proportional_force = (goal_dir / goal_dir_norm) * env.Fmax
-        # else:
-        #     proportional_force = np.zeros(2)
-
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward
 
         # print(f"Current action: {action}")
 
-        #     env.render()
-
         if terminated or truncated:
             print(f"Episode finished after {i + 1} timesteps.")
             print(f"Termination: {terminated}, Truncation: {truncated}")
             print(f"Final state (pos): {obs}")
-            # print(f"Goal position: {env.goal.pos}")
-            # print(f"Distance to goal: {np.linalg.norm(obs[:2] - env.goal.pos):.3f}")
             print(f"Total reward: {total_reward:.2f}")
             if env.render_mode == "human":
                 pass

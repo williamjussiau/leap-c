@@ -1,21 +1,23 @@
-from pathlib import Path
 from functools import partial
+from pathlib import Path
 
-from .cartpole.env import CartPoleEnv
 from .cartpole.controller import CartPoleController
-from .chain.env import ChainEnv
+from .cartpole.env import CartPoleEnv
 from .chain.controller import ChainController
-from .pointmass.env import PointMassEnv
-from .pointmass.controller import PointMassController
-from .hvac.env import StochasticThreeStateRcEnv
+from .chain.env import ChainEnv
+from .cylinder.controller import CylinderController
+from .cylinder.env import CylinderEnv
 from .hvac.controller import HvacController
-
+from .hvac.env import StochasticThreeStateRcEnv
+from .pointmass.controller import PointMassController
+from .pointmass.env import PointMassEnv
 
 ENV_REGISTRY = {
     "cartpole": CartPoleEnv,
     "chain": ChainEnv,
     "pointmass": PointMassEnv,
     "hvac": StochasticThreeStateRcEnv,
+    "cylinder": CylinderEnv,
 }
 
 
@@ -27,6 +29,7 @@ CONTROLLER_REGISTRY = {
     "pointmass": PointMassController,
     "pointmass_stagewise": partial(PointMassController, stagewise=True),
     "hvac": HvacController,
+    "cylinder": CylinderController,
 }
 
 

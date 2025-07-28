@@ -6,6 +6,7 @@ import dolfin
 import flowcontrol.flowsolverparameters as flowsolverparameters
 import gymnasium as gym
 import numpy as np
+import utils.utils_flowsolver as flu
 from examples.cylinder.cylinderflowsolver import CylinderFlowSolver
 from flowcontrol.actuator import ActuatorBCParabolicV
 from flowcontrol.sensor import SENSOR_TYPE, SensorPoint

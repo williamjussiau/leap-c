@@ -42,13 +42,6 @@ class YoulaControllerCfg:
             # positive feedback with G
 
         # K0 = flowcontroller.Controller.from_file(
-        #     file=Path(
-        #         "leap_c ", " examples ", " cylinder ", " data_input ", " Kopt_reduced13.mat"
-        #     ),
-        #     x0=None,
-        # )
-        self.G = G
-        self.K0 = K0
         self.Ghat = flowconyu.control.feedback(self.G, self.K0, sign=+1)
         self.Ghatnorm = flowconyu.norm(self.Ghat, p=np.inf)
         self.log_rho0 = 0
@@ -63,25 +56,14 @@ def default_ss():
 
 @dataclass(kw_only=True)
 class CylinderParams:
-<<<<<<< HEAD
     p: float  # single real pole of Laguerre basis, float
     theta: np.array  # coordinates of Q in Laguerre basis, list[float]
     # G: control.StateSpace
     # K0: flowcontroller.Controller
-=======
-    Re: float
-    # W: What is this supposed to be? Is it the parameters of the Cylinder configuration,
-    # or the parameters for the controller for the Cylinder? It seems to be used only
-    # in controller.py, so I would go for the 2nd option. In that case, do not use Re
-    # but rather the parameters of the controller like N_expansion...
-    p: int
-    theta: list
->>>>>>> ec33a2a (Redefine CylinderParams to include Controller parameters)
 
 
 def make_default_cylinder_params(stagewise: bool = False) -> CylinderParams:
     """Returns a CylinderParams instance with default parameter values."""
-<<<<<<< HEAD
     p = 1.0
     theta = np.zeros(
         DEFAULT_LAGUERRE_EXPANSION_SIZE,
@@ -123,6 +105,3 @@ def collate_flowcontrol_ctx(
     return FlowControlCtx(
         controller_order=controller_order_batch, controller_state=controller_state_batch
     )
-=======
-    return CylinderParams(Re=100, p=1, theta=[0.0])
->>>>>>> ec33a2a (Redefine CylinderParams to include Controller parameters)

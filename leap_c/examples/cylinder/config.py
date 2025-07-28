@@ -22,9 +22,9 @@ class YoulaControllerCfg:
 
     def __init__(self, G=None, K0=None):
         if G is None:
-            G = default_ss()
+            G = default_ss()  # read from file
         if K0 is None:
-            K0 = default_ss()
+            K0 = default_ss()  # read from file
 
         # G = flowcon.Controller.from_file(
         #     file=Path(

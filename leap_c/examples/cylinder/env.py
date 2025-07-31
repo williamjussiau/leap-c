@@ -1,9 +1,13 @@
 from pathlib import Path
+from time import sleep
 
+import cylinder_renderer
 import dolfin
 import flowcontrol.flowsolverparameters as flowsolverparameters
 import gymnasium as gym
 import numpy as np
+import pygame
+import utils.utils_flowsolver as flu
 from examples.cylinder.cylinderflowsolver import CylinderFlowSolver
 from flowcontrol.actuator import ActuatorBCParabolicV
 from flowcontrol.sensor import SENSOR_TYPE, SensorPoint
@@ -49,6 +53,7 @@ class CylinderEnv(gym.Env):
     def __init__(
         self,
         render_mode: str | None = None,
+        render_method: str = "project",
         Re: float = 100,
         Tf: float = 1,
         save_every: int = 0,
@@ -63,19 +68,11 @@ class CylinderEnv(gym.Env):
         )
         initialize_flowsolver(self.flowsolver)
 
-        # Action & observation spaces bounds
-        # high = np.array(
-        #     [
-        #         self.x_threshold * 2,
-        #         2 * np.pi,
-        #         np.finfo(np.float32).max,
-        #         np.finfo(np.float32).max,
-        #     ],
-        #     dtype=np.float32,
-        # )
-
+        # Action, Observation...
         self.action_space = spaces.Box(-self.umax, self.umax, dtype=np.float32)
-        self.observation_space = spaces.Box(-1, 1, dtype=np.float32)  ########### TODO
+        self.observation_space = spaces.Box(
+            -10 * np.ones((3,)), 10 * np.ones((3,)), dtype=np.float32
+        )  ########### TODO
 
         self.reset_needed = True
         self.t = 0
@@ -83,18 +80,10 @@ class CylinderEnv(gym.Env):
         self.x = None
 
         # For rendering
-        if not (render_mode is None or render_mode in self.metadata["render_modes"]):
-            raise ValueError(
-                f"render_mode must be one of {self.metadata['render_modes']}"
-            )
-        self.render_mode = render_mode
-        # self.pos_trajectory = None
-        # self.pole_end_trajectory = None
-        # self.x_trajectory = None
-        self.screen_width = 600
-        self.screen_height = 400
-        self.window = None
-        self.clock = None
+        self.check_render_mode(render_mode=render_mode)
+        self.renderer = cylinder_renderer.CylinderRenderer(
+            self.flowsolver, render_method=render_method
+        )
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Execute one step of the flow dynamics."""
@@ -156,11 +145,23 @@ class CylinderEnv(gym.Env):
         self.x_trajectory = []
         return self.x, {}
 
+    ####################################################################################
+    ####################################################################################
     def render(self):
-        pass
+        self.renderer.render()
 
     def close(self):
-        pass
+        self.renderer.close()
+
+    def check_render_mode(self, render_mode):
+        if not (render_mode is None or render_mode in self.metadata["render_modes"]):
+            raise ValueError(
+                f"render_mode must be one of {self.metadata['render_modes']}"
+            )
+        return 1
+
+    ####################################################################################
+    ####################################################################################
 
 
 def instantiate_flowsolver(Re, Tf, save_every):
@@ -246,38 +247,3 @@ def initialize_flowsolver(fs: CylinderFlowSolver):
 
     # TODO: read attractor snapshot for init
     fs.initialize_time_stepping(ic=None)  # or ic=dolfin.Function(fs.W)
-
-
-if __name__ == "__main__":
-    print("Instantiate CylinderFlowSolver.")
-    env = CylinderEnv(render_mode="human", Re=100, Tf=0.05, save_every=0)
-
-    print("Reset CylinderFlowSolver.")
-    obs, info = env.reset(seed=44)
-
-    terminated = False
-    truncated = False
-    total_reward = 0
-    # env.render()
-
-    for i in range(100):  # Increase steps for longer visualization
-        action = env.action_space.sample()
-
-        obs, reward, terminated, truncated, info = env.step(action)
-        total_reward += reward
-
-        # print(f"Current action: {action}")
-
-        if terminated or truncated:
-            print(f"Episode finished after {i + 1} timesteps.")
-            print(f"Termination: {terminated}, Truncation: {truncated}")
-            print(f"Final state (pos): {obs}")
-            print(f"Total reward: {total_reward:.2f}")
-            if env.render_mode == "human":
-                pass
-                # plt.pause(5.0)  # Increased pause to see final state
-            break  # Stop after one episode for this example
-
-    # # Close the environment rendering window
-    # env.close()
-    print("Environment closed.")

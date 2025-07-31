@@ -1,11 +1,14 @@
 from datetime import datetime
 from pathlib import Path
+from time import sleep
 
 import cylinder_renderer
 import dolfin
 import flowcontrol.flowsolverparameters as flowsolverparameters
 import gymnasium as gym
 import numpy as np
+import pygame
+import utils.utils_flowsolver as flu
 from examples.cylinder.cylinderflowsolver import CylinderFlowSolver
 from flowcontrol.actuator import ActuatorBCParabolicV
 from flowcontrol.sensor import SENSOR_TYPE, SensorPoint

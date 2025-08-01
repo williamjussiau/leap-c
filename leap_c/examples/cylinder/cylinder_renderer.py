@@ -64,63 +64,136 @@ class CylinderRenderer:
         else:
             self.imshow.set_array(Z)
 
+    def _first_render(self):
+        # Figure
+        self.figure, self.axes = plt.subplots()
+        self.axes.set_xlabel("x")
+        self.axes.set_ylabel("y")
+        self.axes.set_title("Velocity magnitude")
+
+        # Subdomain of interest
+        self.xbnd, self.ybnd = (-1, 10), (-3, 3)
+        self.nx = 50
+        self.ny = 50
+        fig_w = self.xbnd[1] - self.xbnd[0]
+        fig_h = self.ybnd[1] - self.ybnd[0]
+        fig_alpha = 20
+        self.figure.set_size_inches(
+            w=fig_w * fig_alpha / self.figure_W, h=fig_h * fig_alpha / self.figure_H
+        )
+        self.figure.tight_layout()
+        plt.show()
+
+        # Submesh, projection and samping
+        mesh = self.flowsolver.mesh
+        # mesh_coarse = UFieldProcessor.coarsen_mesh(mesh, nx=nx, ny=ny)
+        self.submesh = UFieldProcessor.make_submesh(
+            mesh, xbnd=self.xbnd, ybnd=self.ybnd
+        )
+        self.target_function_space = dolfin.FunctionSpace(self.submesh, "CG", 1)
+        # self.target_function_space = dolfin.FunctionSpace(self.submesh, "DG", 0)
+        self.projection_operator = ProjectionOperator(
+            target_space=self.target_function_space
+        )
+        # linspace sampling grid
+        self.sampling_grid = UFieldProcessor.make_sampling_grid(
+            self.xbnd, self.ybnd, self.nx, self.ny
+        )
+        # or mesh coordinates (expensive)
+        # self.sampling_grid = mesh.coordinates()
+        _, self.U0_sampl = UFieldProcessor.sample_at(
+            u=self.flowsolver.fields.U0, points=self.sampling_grid
+        )
+
+        # Indexing + get_local
+        # Manual function assigner
+        W_mixfuncspace = self.flowsolver.W
+        alldof_coord = W_mixfuncspace.tabulate_dof_coordinates()  # coord of all dof
+        alldof_idx = flu.get_subspace_dofs(W_mixfuncspace)  # idx of u, v, p dof
+        udof_coord = alldof_coord[alldof_idx["u"], :]  # coord of u dof
+        vdof_coord = alldof_coord[alldof_idx["v"], :]  # coord of v dof
+        # cut subdomain
+        x_min, x_max = self.xbnd
+        y_min, y_max = self.ybnd
+
+        def mask_subdomain(array):
+            return (
+                (array[:, 0] >= x_min)
+                & (array[:, 0] <= x_max)
+                & (array[:, 1] >= y_min)
+                & (array[:, 1] <= y_max)
+            )
+
+        mask_udof = mask_subdomain(udof_coord)
+        mask_vdof = mask_subdomain(vdof_coord)
+        udof_coord = udof_coord[mask_udof]
+        vdof_coord = vdof_coord[mask_vdof]
+        alldof_idx["u"] = alldof_idx["u"][mask_udof]
+        alldof_idx["v"] = alldof_idx["v"][mask_vdof]
+        # now sort coordinates to have same ordering for u, v
+        udof_sort_idx = np.lexsort((udof_coord[:, 1], udof_coord[:, 0]))
+        vdof_sort_idx = np.lexsort((vdof_coord[:, 1], vdof_coord[:, 0]))
+        udof_coord_sorted = udof_coord[udof_sort_idx]
+        # vdof_coord_sorted = vdof_coord[vdof_sort_idx] # equiv to prev line
+        # extract from get_local()
+        UP0 = self.flowsolver.fields.UP0.vector().get_local()
+        u0 = UP0[alldof_idx["u"]][udof_sort_idx]
+        v0 = UP0[alldof_idx["v"]][udof_sort_idx]
+
+        self.u0_values_sorted = u0
+        self.v0_values_sorted = v0
+        self.udof_sort_idx = udof_sort_idx
+        self.vdof_sort_idx = vdof_sort_idx
+        self.dof_coord_sorted = udof_coord_sorted
+        self.alldof_idx = alldof_idx
+
     def render(self):
         """Render field with provided options"""
         t00 = time.time()
 
-        # Full field & magnitude
-        u = self.flowsolver.fields.U0 + self.flowsolver.fields.u_
-        u_mag = dolfin.sqrt(dolfin.dot(u, u))
-
-        # Subdomain of interest
-        xbnd, ybnd = (-1, 10), (-2, 2)
-        nx = 50
-        ny = 50
-
         if self.first_time_render:
-            self.figure, self.axes = plt.subplots()
-            self.axes.set_title("Velocity magnitude")
-            self.axes.set_xlabel("x")
-            self.axes.set_ylabel("y")
-            self.axes.set_title("Velocity magnitude")
+            self._first_render()
 
-            fig_w = xbnd[1] - xbnd[0]
-            fig_h = ybnd[1] - ybnd[0]
-            fig_alpha = 20
-            self.figure.set_size_inches(
-                w=fig_w * fig_alpha / self.figure_W, h=fig_h * fig_alpha / self.figure_H
-            )
-            self.figure.tight_layout()
-            plt.show()
-
-            mesh = self.flowsolver.mesh
-            # mesh_coarse = UFieldProcessor.coarsen_mesh(mesh, nx=nx, ny=ny)
-            self.submesh = UFieldProcessor.make_submesh(mesh, xbnd=xbnd, ybnd=ybnd)
-            self.target_function_space = dolfin.FunctionSpace(self.submesh, "DG", 0)
-            self.projection_operator = ProjectionOperator(
-                target_space=self.target_function_space
-            )
-
-        # Project and plot
+        # Project
         if self.render_method == "project":
-            u_proj = UFieldProcessor.project_to(u_mag, self.target_function_space)
+            u_vec = self.flowsolver.fields.u_ + self.flowsolver.fields.U0
+            u_mag = dolfin.sqrt(dolfin.dot(u_vec, u_vec))
+            # u_proj = UFieldProcessor.project_to(u_mag, self.target_function_space)
             u_proj = self.projection_operator.project(u_mag)
             self.plot_dolfin(u_proj)
 
-        # # Option B: Sample and plot
+        # Sample
         if self.render_method == "sample":
-            coords_sampl, u_mag_sampl = UFieldProcessor.sample_on_grid(
-                u=u_mag, xbnd=xbnd, ybnd=ybnd, nx=nx, ny=ny
+            u_vec = self.flowsolver.fields.u_
+            _, u_sampl = UFieldProcessor.sample_at(u=u_vec, points=self.sampling_grid)
+            u_mag_sampl = np.linalg.norm(u_sampl + self.U0_sampl, ord=2, axis=1)
+
+            # self.plot_sampled(coords=self.sampling_grid, values=u_mag_sampl)
+            self.plot_as_img(
+                coords=self.sampling_grid, values=u_mag_sampl, nx=self.nx, ny=self.ny
             )
-            # sample on mesh vertices: very expensive
-            # coords_sampl, u_mag_sampl = UFieldProcessor.evaluate_on_vertices(
-            #     u=u_mag, mesh=self.submesh
+
+        # Reindexing
+        if self.render_method == "index":
+            if self.flowsolver.fields.up_ is None:
+                return
+            up_vec = self.flowsolver.fields.up_.vector().get_local()
+            u_values_sorted = up_vec[self.alldof_idx["u"]][self.udof_sort_idx]
+            v_values_sorted = up_vec[self.alldof_idx["v"]][self.vdof_sort_idx]
+            U_values_sorted = np.vstack(
+                (
+                    u_values_sorted + self.u0_values_sorted,
+                    v_values_sorted + self.v0_values_sorted,
+                )
+            ).T
+            u_mag_sorted = np.linalg.norm(U_values_sorted, ord=2, axis=1)
+            self.plot_sampled(coords=self.dof_coord_sorted, values=u_mag_sorted)
+            # self.plot_as_img(
+            #     coords=self.dof_coord_sorted,
+            #     values=u_mag_sorted,
+            #     nx=self.nx,
+            #     ny=self.ny,
             # )
-
-            # self.plot_as_img(coords=coords_sampl, values=u_mag_sampl, nx=nx, ny=ny)
-            self.plot_sampled(coords=coords_sampl, values=u_mag_sampl)
-
-        self.first_time_render = False
 
         # Draw
         self.figure.canvas.draw()
@@ -130,11 +203,10 @@ class CylinderRenderer:
         t_render = time.time() - t00
         print(f"Rendered in: {t_render}")
         self.t_render += []
+        self.first_time_render = False
 
     def close(self):
         if self.figure is not None:
-            plt.ioff()
-            plt.show()
             print("Closing Renderer")
             plt.close()
 
@@ -148,24 +220,32 @@ class UFieldProcessor:
         """
         Project velocity field to function_space (CG1, DG0...)
         """
-        V_proj = flu.projectm(u, function_space)
-        return V_proj
+        u_proj = flu.projectm(u, function_space)
+        return u_proj
 
     @staticmethod
-    def sample_on_grid(
-        u: dolfin.Function,
-        xbnd: tuple,
-        ybnd: tuple,
-        nx: int,
-        ny: int,
-    ):
-        """
-        Sample velocity field on a regular grid.
+    def sample_at(u: dolfin.Function, points: np.ndarray, method: str = "eval"):
+        npoints = points.shape[0]
+        values = np.zeros((npoints, 2))
 
-        Returns:
-            coords: array of shape (n_valid_points, 2) - coordinates
-            values: array of shape (n_valid_points, 1) - velocity mag
-        """
+        nan_array = np.array([np.nan, np.nan])
+        if method == "eval":
+            for i, point in enumerate(points):
+                try:
+                    u.eval(values[i, :], point)
+                except Exception:
+                    values[i, :] = nan_array
+        else:
+            for i, point in enumerate(points):
+                try:
+                    values[i, :] = u([point])
+                except Exception:
+                    values[i, :] = nan_array
+
+        return np.array(points), np.array(values)
+
+    @staticmethod
+    def make_sampling_grid(xbnd, ybnd, nx, ny):
         # Get mesh bounds
         x_min, x_max = xbnd
         y_min, y_max = ybnd
@@ -174,21 +254,8 @@ class UFieldProcessor:
         x = np.linspace(x_min, x_max, nx)
         y = np.linspace(y_min, y_max, ny)
         X, Y = np.meshgrid(x, y)
-
-        # Sample velocity at grid points
         points = np.column_stack([X.ravel(), Y.ravel()])
-        values = []
-        coords = []
-
-        for point in points:
-            try:
-                vel = u([point])
-            except Exception:
-                vel = np.nan
-            values.append(vel)
-            coords.append(point)
-
-        return np.array(coords), np.array(values)
+        return points
 
     @staticmethod
     def evaluate_on_vertices(u, mesh):
@@ -199,16 +266,7 @@ class UFieldProcessor:
             coords: array of shape (n_vertices, 2) - vertex coordinates
             values: array of shape (n_vertices, 1) - velocity magnitude
         """
-        coords = mesh.coordinates()
-        values = np.zeros((len(coords),))
-
-        for i, coord in enumerate(coords):
-            try:
-                values[i] = u([coord])
-            except Exception:
-                values[i] = np.nan
-
-        return coords, values
+        return UFieldProcessor.sample_at(u=u, points=mesh.coordinates())
 
     @staticmethod
     def get_mesh_bnds(mesh):

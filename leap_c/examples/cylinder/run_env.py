@@ -1,9 +1,12 @@
+import time
+
 from leap_c.examples.cylinder.env import CylinderEnv
 
 if __name__ == "__main__":
     print("Instantiate CylinderFlowSolver.")
+    render_method = "index"  # 'sample' or 'project' or 'index'
     env = CylinderEnv(
-        render_mode="human", render_method="project", Re=100, Tf=0.05, save_every=0
+        render_mode="human", render_method=render_method, Re=100, Tf=0.05, save_every=0
     )
 
     print("Reset CylinderFlowSolver.")
@@ -34,5 +37,6 @@ if __name__ == "__main__":
             break  # Stop after one episode for this example
 
     # # Close the environment rendering window
+    time.sleep(5)
     env.close()
     print("Environment closed.")

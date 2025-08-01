@@ -95,6 +95,9 @@ class CylinderController(ParameterizedController):
     @property
     def param_space(self) -> gym.Space:
         # TODO scaling of theta here
+        # theta_inf = 1/N * sqrt(0.5 * abs(rho0)) * inv(normhinf(Ghat))
+        # ubnd, lbnd = pm alpha * theta_inf
+        # alpha = 1-10
         low = -1.0 * np.ones(
             1 + self.N_expansion,
         )

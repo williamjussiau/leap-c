@@ -191,3 +191,7 @@ c_generated_code
 
 # Trash
 **/trash
+
+# FEniCS files
+*.h5
+*.xdmf

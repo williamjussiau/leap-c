@@ -27,6 +27,7 @@ class CylinderController(ParameterizedController):
         cylinderConfig: Optional[CylinderCfg] = None,
         youlaControllerConfig: Optional[YoulaControllerCfg] = None,
         N_expansion: int = DEFAULT_LAGUERRE_EXPANSION_SIZE,
+        log_rho0: float = 0,
         stagewise: bool = False,
     ):
         """
@@ -58,6 +59,7 @@ class CylinderController(ParameterizedController):
             + N_expansion
         )
         self.N_expansion = N_expansion
+        self.log_rho0 = log_rho0
 
     def forward(self, obs, param, ctx=None) -> tuple[Any, torch.Tensor]:
         # No batch
@@ -113,6 +115,8 @@ class CylinderController(ParameterizedController):
             self.youlaControllerConfig.log_rho0
             + self.youlaControllerConfig.log_rho_scale
         )
+        low[0] = self.log_rho0 - 2  # log(rho)
+        high[0] = self.log_rho0 + 2  # log(rho)
         return gym.spaces.Box(low=low, high=high, dtype=np.float64)  # type:ignore
 
     @property

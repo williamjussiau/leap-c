@@ -1,13 +1,11 @@
 from datetime import datetime
 from pathlib import Path
-from time import sleep
 
 import cylinder_renderer
 import dolfin
 import flowcontrol.flowsolverparameters as flowsolverparameters
 import gymnasium as gym
 import numpy as np
-import pygame
 import utils.utils_flowsolver as flu
 from examples.cylinder.cylinderflowsolver import CylinderFlowSolver
 from flowcontrol.actuator import ActuatorBCParabolicV
@@ -54,7 +52,7 @@ class CylinderEnv(gym.Env):
     def __init__(
         self,
         render_mode: str | None = None,
-        render_method: str = "project",
+        render_method: str = "sample",
         Re: float = 100,
         Tf: float = 10,
         save_every: int = 100,

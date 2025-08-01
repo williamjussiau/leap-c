@@ -6,7 +6,7 @@ import control
 import flowcontrol.controller as flowcon
 import numpy as np
 
-DEFAULT_LAGUERRE_EXPANSION_SIZE = int(42)
+DEFAULT_LAGUERRE_EXPANSION_SIZE = int(2)
 
 
 @dataclass(kw_only=True)

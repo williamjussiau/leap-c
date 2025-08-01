@@ -10,13 +10,16 @@ plt.ion()
 
 
 class CylinderRenderer:
-    def __init__(self, flowsolver: CylinderFlowSolver, render_method: str):
+    def __init__(
+        self, flowsolver: CylinderFlowSolver, render_method: str, render_mode: str
+    ):
         self.flowsolver = flowsolver
-        self._init_renderer(render_method=render_method)
-
-    def _init_renderer(self, render_method):
-        self.first_time_render = True
         self.render_method = render_method
+        self.render_mode = render_mode
+        self._init_renderer()
+
+    def _init_renderer(self):
+        self.first_time_render = True
         self.t_render = []
 
         # Color limits
@@ -161,6 +164,7 @@ class CylinderRenderer:
             # u_proj = UFieldProcessor.project_to(u_mag, self.target_function_space)
             u_proj = self.projection_operator.project(u_mag)
             self.plot_dolfin(u_proj)
+            u_return = 0
 
         # Sample
         if self.render_method == "sample":
@@ -172,11 +176,12 @@ class CylinderRenderer:
             self.plot_as_img(
                 coords=self.sampling_grid, values=u_mag_sampl, nx=self.nx, ny=self.ny
             )
+            u_return = u_mag_sampl
 
         # Reindexing
         if self.render_method == "index":
             if self.flowsolver.fields.up_ is None:
-                return
+                return 1
             up_vec = self.flowsolver.fields.up_.vector().get_local()
             u_values_sorted = up_vec[self.alldof_idx["u"]][self.udof_sort_idx]
             v_values_sorted = up_vec[self.alldof_idx["v"]][self.vdof_sort_idx]
@@ -188,12 +193,7 @@ class CylinderRenderer:
             ).T
             u_mag_sorted = np.linalg.norm(U_values_sorted, ord=2, axis=1)
             self.plot_sampled(coords=self.dof_coord_sorted, values=u_mag_sorted)
-            # self.plot_as_img(
-            #     coords=self.dof_coord_sorted,
-            #     values=u_mag_sorted,
-            #     nx=self.nx,
-            #     ny=self.ny,
-            # )
+            u_return = u_mag_sorted
 
         # Draw
         self.figure.canvas.draw()
@@ -204,11 +204,13 @@ class CylinderRenderer:
         print(f"Rendered in: {t_render}")
         self.t_render += []
         self.first_time_render = False
+        return u_return
 
     def close(self):
         if self.figure is not None:
             print("Closing Renderer")
             plt.close()
+        return 0
 
 
 #########################################################################

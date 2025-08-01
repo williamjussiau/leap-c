@@ -27,6 +27,7 @@ class CylinderController(ParameterizedController):
         cylinderConfig: Optional[CylinderCfg] = None,
         youlaControllerConfig: Optional[YoulaControllerCfg] = None,
         N_expansion: int = DEFAULT_LAGUERRE_EXPANSION_SIZE,
+        log_rho0: float = 0,
         stagewise: bool = False,
     ):
         """
@@ -58,6 +59,7 @@ class CylinderController(ParameterizedController):
             + N_expansion
         )
         self.N_expansion = N_expansion
+        self.log_rho0 = log_rho0
 
     def forward(self, obs, param, ctx=None) -> tuple[Any, torch.Tensor]:
         # No batch
@@ -69,11 +71,12 @@ class CylinderController(ParameterizedController):
             )
 
         # here: log-transform p if necessary TODO
+        p_pow = 10 ** param[0][0]
         Ky = flowconyu.youla_laguerre(
             G=self.youlaControllerConfig.G,
             K0=self.youlaControllerConfig.K0,
-            p=self.params.p,
-            theta=self.params.theta,
+            p=p_pow,
+            theta=param[0][1:],
         )
         Ky = flowcon.Controller.from_matrices(
             Ky.A, Ky.B, Ky.C, Ky.D, x0=ctx.controller_state
@@ -86,7 +89,7 @@ class CylinderController(ParameterizedController):
             controller_order=self.controller_order, controller_state=Ky.x
         )
 
-        return ctx, u0
+        return ctx, torch.from_numpy(u0)
 
     # def jacobian_action_param(self, ctx) -> np.ndarray:
     #     return self.diff_mpc.sensitivity(ctx, field_name="du0_dp_global")
@@ -94,16 +97,25 @@ class CylinderController(ParameterizedController):
 
     @property
     def param_space(self) -> gym.Space:
-        # TODO scaling of theta here
         # theta_inf = 1/N * sqrt(0.5 * abs(rho0)) * inv(normhinf(Ghat))
         # ubnd, lbnd = pm alpha * theta_inf
         # alpha = 1-10
-        low = -1.0 * np.ones(
+        Ghat = flowconyu.control.feedback(
+            self.youlaControllerConfig.G, self.youlaControllerConfig.K0, sign=1
+        )
+        Ghatnorm = flowconyu.norm(Ghat, p=np.inf)
+        alpha = 10
+        theta_scale = (
+            alpha / self.N_expansion * np.sqrt(0.5 * 10**self.log_rho0) * 1 / Ghatnorm
+        )
+        low = -theta_scale * np.ones(
             1 + self.N_expansion,
         )
-        high = 1.0 * np.ones(
-            1 + self.N_expansion,  # size param here
+        high = theta_scale * np.ones(
+            1 + self.N_expansion,
         )
+        low[0] = self.log_rho0 - 2  # log(rho)
+        high[0] = self.log_rho0 + 2  # log(rho)
         return gym.spaces.Box(low=low, high=high, dtype=np.float64)  # type:ignore
 
     @property

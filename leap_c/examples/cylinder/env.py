@@ -1,12 +1,10 @@
 from pathlib import Path
-from time import sleep
 
 import cylinder_renderer
 import dolfin
 import flowcontrol.flowsolverparameters as flowsolverparameters
 import gymnasium as gym
 import numpy as np
-import pygame
 import utils.utils_flowsolver as flu
 from examples.cylinder.cylinderflowsolver import CylinderFlowSolver
 from flowcontrol.actuator import ActuatorBCParabolicV
@@ -53,7 +51,7 @@ class CylinderEnv(gym.Env):
     def __init__(
         self,
         render_mode: str | None = None,
-        render_method: str = "project",
+        render_method: str = "sample",
         Re: float = 100,
         Tf: float = 1,
         save_every: int = 0,
@@ -69,10 +67,10 @@ class CylinderEnv(gym.Env):
         initialize_flowsolver(self.flowsolver)
 
         # Action, Observation...
-        self.action_space = spaces.Box(-self.umax, self.umax, dtype=np.float32)
+        self.action_space = spaces.Box(low=-self.umax, high=self.umax, dtype=np.float32)
         self.observation_space = spaces.Box(
-            -10 * np.ones((3,)), 10 * np.ones((3,)), dtype=np.float32
-        )  ########### TODO
+            low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32
+        )
 
         self.reset_needed = True
         self.t = 0
@@ -82,8 +80,9 @@ class CylinderEnv(gym.Env):
         # For rendering
         self.check_render_mode(render_mode=render_mode)
         self.renderer = cylinder_renderer.CylinderRenderer(
-            self.flowsolver, render_method=render_method
+            self.flowsolver, render_method=render_method, render_mode=render_mode
         )
+        self.render_mode = render_mode
 
     def step(self, action: np.ndarray) -> tuple[np.ndarray, float, bool, bool, dict]:
         """Execute one step of the flow dynamics."""
@@ -125,7 +124,6 @@ class CylinderEnv(gym.Env):
     def reset(
         self, *, seed: int | None = None, options: dict | None = None
     ) -> tuple[np.ndarray, dict]:  # type: ignore
-        """W: Most likely resets environment?"""
         if seed is not None:
             super().reset(seed=seed)
             self.observation_space.seed(seed)
@@ -148,10 +146,10 @@ class CylinderEnv(gym.Env):
     ####################################################################################
     ####################################################################################
     def render(self):
-        self.renderer.render()
+        return self.renderer.render()
 
     def close(self):
-        self.renderer.close()
+        return self.renderer.close()
 
     def check_render_mode(self, render_mode):
         if not (render_mode is None or render_mode in self.metadata["render_modes"]):
@@ -226,7 +224,7 @@ def instantiate_flowsolver(Re, Tf, save_every):
         params_restart=params_restart,
         params_control=params_control,
         params_ic=params_ic,
-        verbose=1,
+        verbose=0,
     )
 
     return fs

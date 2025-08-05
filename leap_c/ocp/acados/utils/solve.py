@@ -40,6 +40,7 @@ def solve_with_retry(
     else:
         with_retry = True
 
+
     prepare_batch_solver(batch_solver, ocp_iterate, solver_input)
 
     start = time.perf_counter()

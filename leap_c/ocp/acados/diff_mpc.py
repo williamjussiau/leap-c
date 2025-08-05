@@ -166,7 +166,10 @@ class AcadosDiffMpcFunction(DiffFunction):
         sol_value = np.array([s.get_cost() for s in active_solvers])
         sol_u0 = sol_iterate.u[:, : self.ocp.dims.nu]
 
-        return ctx, sol_u0, sol_iterate.x, sol_iterate.u, sol_value
+        x = sol_iterate.x.reshape(batch_size, self.ocp.dims.N + 1, -1)  # type: ignore
+        u = sol_iterate.u.reshape(batch_size, self.ocp.dims.N, -1)  # type: ignore
+
+        return ctx, sol_u0, x, u, sol_value
 
     def backward(  # type: ignore
         self,
@@ -189,39 +192,49 @@ class AcadosDiffMpcFunction(DiffFunction):
         if ctx.needs_input_grad is None:
             return None, None, None, None, None
 
+        prepare_batch_solver_for_backward(
+            self.backward_batch_solver, ctx.iterate, ctx.solver_input
+        )
+
         def _adjoint(x_seed, u_seed, with_respect_to: str):
             # backpropagation via the adjoint operator
             if x_seed is None and u_seed is None:
                 return None
 
             # check if x_seed and u_seed are all zeros
-            if np.all(x_seed == 0) and np.all(u_seed == 0):
+            # TODO (Jasper): Optimize this such that we also
+            #   filter out individual stages
+            dx_zero = np.all(x_seed == 0) if x_seed is not None else True
+            du_zero = np.all(u_seed == 0) if u_seed is not None else True
+            if dx_zero and du_zero:
                 return None
 
             x_seed_with_stage = (
                 [
-                    (stage_idx, x_seed)
-                    for stage_idx in range(self.ocp.dims.N + 1)  # type: ignore
+                    (stage_idx, x_seed[:, stage_idx][..., None])
+                    for stage_idx in range(0, self.ocp.dims.N + 1)  # type: ignore
                 ]
-                if x_seed is not None
+                if x_seed is not None and not dx_zero
                 else []
             )
+
 
             u_seed_with_stage = (
                 [
-                    (stage_idx, u_seed)
+                    (stage_idx, u_seed[:, stage_idx][..., None])
                     for stage_idx in range(self.ocp.dims.N)  # type: ignore
                 ]
-                if u_seed is not None
+                if u_seed is not None and not du_zero
                 else []
             )
-
-            return self.backward_batch_solver.eval_adjoint_solution_sensitivity(
+            grad = self.backward_batch_solver.eval_adjoint_solution_sensitivity(
                 seed_x=x_seed_with_stage,
                 seed_u=u_seed_with_stage,
                 with_respect_to=with_respect_to,
                 sanity_checks=True,
-            )
+            )[:, 0]
+
+            return grad
 
         def _jacobian(output_grad, field_name: AcadosDiffMpcSensitivityOptions):
             if output_grad is None or np.all(output_grad == 0):

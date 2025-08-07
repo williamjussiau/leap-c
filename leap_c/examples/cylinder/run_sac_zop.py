@@ -39,9 +39,9 @@ def run_sac_zop(
 
     # ---- Section: cfg.trainer ----
     cfg.trainer.seed = 0
-    cfg.trainer.train_steps = 10
+    cfg.trainer.train_steps = 100
     cfg.trainer.train_start = 0
-    cfg.trainer.val_interval = 1
+    cfg.trainer.val_interval = 10
     cfg.trainer.val_num_rollouts = 20
     cfg.trainer.val_deterministic = True
     cfg.trainer.val_num_render_rollouts = 1
@@ -50,7 +50,7 @@ def run_sac_zop(
     cfg.trainer.val_report_score = "cum"
     cfg.trainer.ckpt_modus = "best"
     cfg.trainer.batch_size = 64
-    cfg.trainer.buffer_size = 1000000
+    cfg.trainer.buffer_size = 1000  #  1e6
     cfg.trainer.gamma = 0.99
     cfg.trainer.tau = 0.005
     cfg.trainer.soft_update_freq = 1
@@ -66,8 +66,8 @@ def run_sac_zop(
 
     # ---- Section: cfg.trainer.log ----
     cfg.trainer.log.verbose = verbose
-    cfg.trainer.log.interval = 1000
-    cfg.trainer.log.window = 10000
+    cfg.trainer.log.interval = 1  # 1000
+    cfg.trainer.log.window = 1  # 10_000
     cfg.trainer.log.csv_logger = True
     cfg.trainer.log.tensorboard_logger = True
     cfg.trainer.log.wandb_logger = False

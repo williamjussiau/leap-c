@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 import cylinder_renderer
@@ -51,13 +52,14 @@ class CylinderEnv(gym.Env):
     def __init__(
         self,
         render_mode: str | None = None,
-        render_method: str = "sample",
+        render_method: str = "project",
         Re: float = 100,
-        Tf: float = 1,
-        save_every: int = 0,
+        Tf: float = 10,
+        save_every: int = 100,
     ):
         self.Re = Re
         self.umax = 2
+        self.umin = -self.umax
 
         # FlowSolver
         dolfin.set_log_level(dolfin.LogLevel.INFO)  # DEBUG TRACE PROGRESS INFO
@@ -67,7 +69,7 @@ class CylinderEnv(gym.Env):
         initialize_flowsolver(self.flowsolver)
 
         # Action, Observation...
-        self.action_space = spaces.Box(low=-self.umax, high=self.umax, dtype=np.float32)
+        self.action_space = spaces.Box(low=self.umin, high=self.umax, dtype=np.float32)
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf, shape=(3,), dtype=np.float32
         )
@@ -89,6 +91,12 @@ class CylinderEnv(gym.Env):
         if self.reset_needed:
             raise Exception("Call reset before using the step method.")
 
+        # saturation: this form prefered over minmax for some reason
+        if action > self.umax:
+            action = self.umax
+        if action < self.umin:
+            action = self.umin
+
         y = self.flowsolver.step(
             u_ctrl=np.repeat(action, repeats=2, axis=0)
         )  # 1D action into 2D to feed 2 actuators
@@ -97,17 +105,15 @@ class CylinderEnv(gym.Env):
         self.x_trajectory.append(self.x)  # type: ignore
         self.t = self.flowsolver.t
 
-        r = -np.linalg.norm(y)  # bigger reward when smaller y norm
+        r = -np.linalg.norm(y) * 1 / np.sqrt(self.max_time)
+        # bigger reward when smaller y norm
 
         # W: Stopping criteria?
         term = False
         trunc = False
         info = {}
-        # if self.x[0] > self.x_threshold or self.x[0] < -self.x_threshold:
-        #     term = True  # Just terminating should be enough punishment when reward is positive
-        #     info = {"task": {"violation": True, "success": False}}
+
         if self.t >= self.max_time:
-            # check if the pole is upright in the last 10 steps
             if len(self.x_trajectory) >= 10:
                 success = all(
                     np.linalg.norm(self.x_trajectory[i]) < 0.1 for i in range(-10, 0)
@@ -117,6 +123,11 @@ class CylinderEnv(gym.Env):
 
             info = {"task": {"violation": False, "success": success}}
             trunc = True
+
+        if np.isnan(r):
+            info = {"task": {"violation": True, "success": False}}
+            trunc = True
+
         self.reset_needed = trunc or term
 
         return self.x, r, term, trunc, info
@@ -134,10 +145,15 @@ class CylinderEnv(gym.Env):
         self.flowsolver.initialize_time_stepping(
             ic=None
         )  # initial state = base flow + ic
+        # TODO initial state on attractor, rand phase in [0,2pi]
+        self.flowsolver.paths["timeseries"] = (
+            self.flowsolver.params_save.path_out
+            / f"ts_{datetime.now().strftime('%m-%d_%H-%M-%S')}.csv"
+        )
 
         # reset the rest
         self.t = 0
-        self.x = self.flowsolver.y_meas  ########### TODO: what is state
+        self.x = self.flowsolver.y_meas
         self.reset_needed = False
 
         self.x_trajectory = []
@@ -224,7 +240,7 @@ def instantiate_flowsolver(Re, Tf, save_every):
         params_restart=params_restart,
         params_control=params_control,
         params_ic=params_ic,
-        verbose=0,
+        verbose=500,
     )
 
     return fs

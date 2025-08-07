@@ -3,8 +3,9 @@ from pathlib import Path
 from typing import Callable, NamedTuple, Optional, Sequence
 
 import control
-import flowcontrol.controller as flowcon
+import flowcontrol.controller as flowcontroller
 import numpy as np
+import utils.youla_utils as flowconyu
 
 DEFAULT_LAGUERRE_EXPANSION_SIZE = int(2)
 
@@ -17,22 +18,30 @@ class CylinderCfg:
 
 @dataclass(kw_only=True)
 class YoulaControllerCfg:
-    G: Optional[flowcon.Controller] = None
-    K0: Optional[flowcon.Controller] = None
+    G: Optional[flowcontroller.Controller] = None
+    K0: Optional[flowcontroller.Controller] = None
 
     def __init__(self, G=None, K0=None):
         if G is None:
-            G = default_ss()  # read from file
+            G = flowcontroller.Controller.from_file(
+                file=Path(
+                    "leap_c",
+                    "examples",
+                    "cylinder",
+                    "data_input",
+                    "sysid_o16_d=3_ssest.mat",
+                ),
+                x0=None,
+            )
         if K0 is None:
-            K0 = default_ss()  # read from file
+            Qx = np.diag(np.ones(shape=(G.nstates,)))
+            Qu = 1
+            Qw = np.diag(np.ones(shape=(G.nstates,)))
+            Qv = 1
+            K0, _, _ = flowconyu.lqg_regulator(G=G, Qx=Qx, Qu=Qu, Qw=Qw, Qv=Qv)
+            # positive feedback with G
 
-        # G = flowcon.Controller.from_file(
-        #     file=Path(
-        #         "leap_c", "examples", "cylinder", "data_input", "sysid_o16_d=3_ssest.mat"
-        #     ),
-        #     x0=None,
-        # )
-        # K0 = flowcon.Controller.from_file(
+        # K0 = flowcontroller.Controller.from_file(
         #     file=Path(
         #         "leap_c ", " examples ", " cylinder ", " data_input ", " Kopt_reduced13.mat"
         #     ),
@@ -40,10 +49,16 @@ class YoulaControllerCfg:
         # )
         self.G = G
         self.K0 = K0
+        self.Ghat = flowconyu.control.feedback(self.G, self.K0, sign=+1)
+        self.Ghatnorm = flowconyu.norm(self.Ghat, p=np.inf)
+        self.log_rho0 = 0
+        self.log_rho_scale = 2
+        alpha = 10
+        self.theta_scale = alpha * np.sqrt(0.5 * 10**self.log_rho0) * 1 / self.Ghatnorm
 
 
 def default_ss():
-    return flowcon.Controller.from_matrices(A=1, B=1, C=1, D=0, x0=None)
+    return flowcontroller.Controller.from_matrices(A=1, B=1, C=1, D=0, x0=None)
 
 
 @dataclass(kw_only=True)
@@ -51,7 +66,7 @@ class CylinderParams:
     p: float  # single real pole of Laguerre basis, float
     theta: np.array  # coordinates of Q in Laguerre basis, list[float]
     # G: control.StateSpace
-    # K0: flowcon.Controller
+    # K0: flowcontroller.Controller
 
 
 def make_default_cylinder_params(stagewise: bool = False) -> CylinderParams:

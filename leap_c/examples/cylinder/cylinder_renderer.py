@@ -93,8 +93,9 @@ class CylinderRenderer:
         self.submesh = UFieldProcessor.make_submesh(
             mesh, xbnd=self.xbnd, ybnd=self.ybnd
         )
-        self.target_function_space = dolfin.FunctionSpace(self.submesh, "CG", 1)
-        # self.target_function_space = dolfin.FunctionSpace(self.submesh, "DG", 0)
+        CG1 = dolfin.FunctionSpace(self.submesh, "CG", 1)  # Continuous Galerkin d°1
+        DG0 = dolfin.FunctionSpace(self.submesh, "DG", 0)  # Discontinuous Galerkin d°0
+        self.target_function_space = CG1
         self.projection_operator = ProjectionOperator(
             target_space=self.target_function_space
         )
@@ -157,59 +158,62 @@ class CylinderRenderer:
         if self.first_time_render:
             self._first_render()
 
-        # Project
-        if self.render_method == "project":
-            u_vec = self.flowsolver.fields.u_ + self.flowsolver.fields.U0
-            u_mag = dolfin.sqrt(dolfin.dot(u_vec, u_vec))
-            # u_proj = UFieldProcessor.project_to(u_mag, self.target_function_space)
-            u_proj = self.projection_operator.project(u_mag)
-            self.plot_dolfin(u_proj)
-            u_return = 0
+        # # Project
+        # if self.render_method == "project":
+        #     u_vec = self.flowsolver.fields.u_ + self.flowsolver.fields.U0
+        #     u_mag = dolfin.sqrt(dolfin.dot(u_vec, u_vec))
+        #     # u_proj = UFieldProcessor.project_to(u_mag, self.target_function_space)
+        #     u_proj = self.projection_operator.project(u_mag)
+        #     self.plot_dolfin(u_proj)
 
-        # Sample
-        if self.render_method == "sample":
-            u_vec = self.flowsolver.fields.u_
-            _, u_sampl = UFieldProcessor.sample_at(u=u_vec, points=self.sampling_grid)
-            u_mag_sampl = np.linalg.norm(u_sampl + self.U0_sampl, ord=2, axis=1)
+        # # Sample
+        # if self.render_method == "sample":
+        #     u_vec = self.flowsolver.fields.u_
+        #     _, u_sampl = UFieldProcessor.sample_at(u=u_vec, points=self.sampling_grid)
+        #     u_mag_sampl = np.linalg.norm(u_sampl + self.U0_sampl, ord=2, axis=1)
 
-            # self.plot_sampled(coords=self.sampling_grid, values=u_mag_sampl)
-            self.plot_as_img(
-                coords=self.sampling_grid, values=u_mag_sampl, nx=self.nx, ny=self.ny
-            )
-            u_return = u_mag_sampl
+        #     # self.plot_sampled(coords=self.sampling_grid, values=u_mag_sampl)
+        #     self.plot_as_img(
+        #         coords=self.sampling_grid, values=u_mag_sampl, nx=self.nx, ny=self.ny
+        #     )
 
-        # Reindexing
-        if self.render_method == "index":
-            if self.flowsolver.fields.up_ is None:
-                return 1
-            up_vec = self.flowsolver.fields.up_.vector().get_local()
-            u_values_sorted = up_vec[self.alldof_idx["u"]][self.udof_sort_idx]
-            v_values_sorted = up_vec[self.alldof_idx["v"]][self.vdof_sort_idx]
-            U_values_sorted = np.vstack(
-                (
-                    u_values_sorted + self.u0_values_sorted,
-                    v_values_sorted + self.v0_values_sorted,
-                )
-            ).T
-            u_mag_sorted = np.linalg.norm(U_values_sorted, ord=2, axis=1)
-            self.plot_sampled(coords=self.dof_coord_sorted, values=u_mag_sorted)
-            u_return = u_mag_sorted
+        # # Reindexing
+        # if self.render_method == "index":
+        #     if self.flowsolver.fields.up_ is None:
+        #         self.first_time_render = False
+        #         return 1  # fast exit
+        #     up_vec = self.flowsolver.fields.up_.vector().get_local()
+        #     u_values_sorted = up_vec[self.alldof_idx["u"]][self.udof_sort_idx]
+        #     v_values_sorted = up_vec[self.alldof_idx["v"]][self.vdof_sort_idx]
+        #     U_values_sorted = np.vstack(
+        #         (
+        #             u_values_sorted + self.u0_values_sorted,
+        #             v_values_sorted + self.v0_values_sorted,
+        #         )
+        #     ).T
+        #     u_mag_sorted = np.linalg.norm(U_values_sorted, ord=2, axis=1)
+        #     self.plot_sampled(coords=self.dof_coord_sorted, values=u_mag_sorted)
 
         # Draw
-        self.figure.canvas.draw()
-        self.figure.canvas.flush_events()
+        # self.figure.canvas.draw()
+        # self.figure.canvas.flush_events()
+        # if self.render_mode == "rgb_array":
+        #     u_rgb = np.asarray(self.figure.canvas.renderer.buffer_rgba())[:, :, :3]
+        # else:
+        #     u_rgb = 0
+        u_rgb = 0
 
         # Measure time
         t_render = time.time() - t00
-        print(f"Rendered in: {t_render}")
-        self.t_render += []
+        # print(f"Rendered in: {t_render}")
+        self.t_render.append(t_render)
         self.first_time_render = False
-        return u_return
+        return u_rgb
 
     def close(self):
         if self.figure is not None:
             print("Closing Renderer")
-            plt.close()
+            plt.close("all")
         return 0
 
 

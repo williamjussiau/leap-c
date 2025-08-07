@@ -27,7 +27,6 @@ class CylinderController(ParameterizedController):
         cylinderConfig: Optional[CylinderCfg] = None,
         youlaControllerConfig: Optional[YoulaControllerCfg] = None,
         N_expansion: int = DEFAULT_LAGUERRE_EXPANSION_SIZE,
-        log_rho0: float = 0,
         stagewise: bool = False,
     ):
         """
@@ -59,7 +58,6 @@ class CylinderController(ParameterizedController):
             + N_expansion
         )
         self.N_expansion = N_expansion
-        self.log_rho0 = log_rho0
 
     def forward(self, obs, param, ctx=None) -> tuple[Any, torch.Tensor]:
         # No batch
@@ -88,6 +86,7 @@ class CylinderController(ParameterizedController):
         ctx = FlowControlCtx(
             controller_order=self.controller_order, controller_state=Ky.x
         )
+        # TODO try saturation
 
         return ctx, torch.from_numpy(u0)
 
@@ -97,25 +96,23 @@ class CylinderController(ParameterizedController):
 
     @property
     def param_space(self) -> gym.Space:
-        # theta_inf = 1/N * sqrt(0.5 * abs(rho0)) * inv(normhinf(Ghat))
-        # ubnd, lbnd = pm alpha * theta_inf
-        # alpha = 1-10
-        Ghat = flowconyu.control.feedback(
-            self.youlaControllerConfig.G, self.youlaControllerConfig.K0, sign=1
-        )
-        Ghatnorm = flowconyu.norm(Ghat, p=np.inf)
-        alpha = 10
-        theta_scale = (
-            alpha / self.N_expansion * np.sqrt(0.5 * 10**self.log_rho0) * 1 / Ghatnorm
-        )
+        # theta
+        theta_scale = self.youlaControllerConfig.theta_scale / self.N_expansion
         low = -theta_scale * np.ones(
             1 + self.N_expansion,
         )
         high = theta_scale * np.ones(
             1 + self.N_expansion,
         )
-        low[0] = self.log_rho0 - 2  # log(rho)
-        high[0] = self.log_rho0 + 2  # log(rho)
+        # rho (log transformed)
+        low[0] = (
+            self.youlaControllerConfig.log_rho0
+            - self.youlaControllerConfig.log_rho_scale
+        )
+        high[0] = (
+            self.youlaControllerConfig.log_rho0
+            + self.youlaControllerConfig.log_rho_scale
+        )
         return gym.spaces.Box(low=low, high=high, dtype=np.float64)  # type:ignore
 
     @property

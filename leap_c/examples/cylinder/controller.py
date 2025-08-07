@@ -27,7 +27,6 @@ class CylinderController(ParameterizedController):
         cylinderConfig: Optional[CylinderCfg] = None,
         youlaControllerConfig: Optional[YoulaControllerCfg] = None,
         N_expansion: int = DEFAULT_LAGUERRE_EXPANSION_SIZE,
-        log_rho0: float = 0,
         stagewise: bool = False,
     ):
         """
@@ -59,7 +58,6 @@ class CylinderController(ParameterizedController):
             + N_expansion
         )
         self.N_expansion = N_expansion
-        self.log_rho0 = log_rho0
 
     def forward(self, obs, param, ctx=None) -> tuple[Any, torch.Tensor]:
         # No batch

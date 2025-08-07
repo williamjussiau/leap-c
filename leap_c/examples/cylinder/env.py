@@ -52,7 +52,7 @@ class CylinderEnv(gym.Env):
     def __init__(
         self,
         render_mode: str | None = None,
-        render_method: str = "sample",
+        render_method: str = "project",
         Re: float = 100,
         Tf: float = 10,
         save_every: int = 100,

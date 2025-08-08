@@ -68,6 +68,8 @@ class CylinderRenderer:
             self.imshow.set_array(Z)
 
     def _first_render(self):
+        """Initialization when first rendering: create figure, compute some FEniCS
+        quantities used for fast plotting..."""
         # Figure
         self.figure, self.axes = plt.subplots()
         self.axes.set_xlabel("x")

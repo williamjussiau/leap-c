@@ -26,11 +26,14 @@ class CylinderEnv(gym.Env):
 
     | Num | Observation           | Min                 | Max               |
     |-----|-----------------------|---------------------|-------------------|
-    | 0   | Cart Position         | -4.8                | 4.8               |
-    | 1   | Pole Angle (theta)    | -2pi                | 2pi               |
-    | 2   | Cart Velocity         | -Inf                | Inf               |
-    | 3   | Pole Angular Velocity | -Inf                | Inf               |
+    | 0   | Vy(3, 0)              | -Inf                | Inf               |
+    | 1   | Vy(3.1, 1)            | -Inf                | Inf               |
+    | 2   | Vy(3.1, -1)           | -Inf                | Inf               |
 
+    For now:
+    sensor_feedback = SensorPoint(sensor_type=SENSOR_TYPE.V, position=np.array([3, 0]))
+    sensor_perf_1 = SensorPoint(sensor_type=SENSOR_TYPE.V, position=np.array([3.1, 1]))
+    sensor_perf_2 = SensorPoint(sensor_type=SENSOR_TYPE.V, position=np.array([3.1, -1]))
     ---> TODO: full field or sensors?
 
     Action Space:
@@ -179,6 +182,7 @@ class CylinderEnv(gym.Env):
 
 
 def instantiate_flowsolver(Re, Tf, save_every):
+    """Create CylinderFlowSolver object with mainly default parameters"""
     cwd = Path(__file__).parent
     dt = 0.005
     num_steps = int(np.ceil(Tf / dt))
@@ -247,6 +251,9 @@ def instantiate_flowsolver(Re, Tf, save_every):
 
 
 def initialize_flowsolver(fs: CylinderFlowSolver):
+    """Initialize CylinderFlowSolver before time-stepping
+    TODO: here, we choose the initial state of the flow (e.g. somewhere
+    close to equilibrium, or on attractor)"""
     uctrl0 = [0.0, 0.0]
 
     if Path(fs.paths["U0"]).exists():

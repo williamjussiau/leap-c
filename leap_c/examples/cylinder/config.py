@@ -18,6 +18,8 @@ class CylinderCfg:
 
 @dataclass(kw_only=True)
 class YoulaControllerCfg:
+    """Wrapper class for Youla parametrization"""
+
     G: Optional[flowcontroller.Controller] = None
     K0: Optional[flowcontroller.Controller] = None
 
@@ -51,6 +53,7 @@ class YoulaControllerCfg:
 
 
 def default_ss():
+    """Default StateSpace system with transfer 1"""
     return flowcontroller.Controller.from_matrices(A=1, B=1, C=1, D=0, x0=None)
 
 
@@ -58,12 +61,10 @@ def default_ss():
 class CylinderParams:
     p: float  # single real pole of Laguerre basis, float
     theta: np.array  # coordinates of Q in Laguerre basis, list[float]
-    # G: control.StateSpace
-    # K0: flowcontroller.Controller
 
 
 def make_default_cylinder_params(stagewise: bool = False) -> CylinderParams:
-    """Returns a CylinderParams instance with default parameter values."""
+    """Default CylinderParams instance with default parameter values"""
     p = 1.0
     theta = np.zeros(
         DEFAULT_LAGUERRE_EXPANSION_SIZE,

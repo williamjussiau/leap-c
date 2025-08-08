@@ -33,9 +33,10 @@ class CylinderController(ParameterizedController):
         Args:
             params: A dict with the parameters of the ocp, together with their default values.
                 For a description of the parameters, see the docstring of the class.
-            G
-            K0
-            N_expansion
+            cylinderConfig: parameters of cylinder environment
+            youlaControllerConfig: parameters of Youla parametrization (G, K0, ...)
+            N_expansion (int): size of Laguerre expansion in Youla parametrization
+            stagewise
         """
         super().__init__()
         self.params = (

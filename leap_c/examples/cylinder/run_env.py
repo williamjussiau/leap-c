@@ -1,12 +1,15 @@
 import time
 
+from flowcontrol.controller import Controller
+
+from leap_c.examples.cylinder.config import YoulaControllerCfg
 from leap_c.examples.cylinder.env import CylinderEnv
 
 if __name__ == "__main__":
     print("Instantiate CylinderFlowSolver.")
     render_method = "index"  # 'sample' or 'project' or 'index'
     env = CylinderEnv(
-        render_mode="human", render_method=render_method, Re=100, Tf=0.05, save_every=0
+        render_mode="human", render_method=render_method, Re=100, Tf=1, save_every=500
     )
 
     print("Reset CylinderFlowSolver.")
@@ -17,8 +20,13 @@ if __name__ == "__main__":
     total_reward = 0
     env.render()
 
-    for i in range(100):  # Increase steps for longer visualization
-        action = env.action_space.sample()
+    K0 = YoulaControllerCfg().K0
+    K0ss = Controller.from_matrices(K0.A, K0.B, K0.C, K0.D, x0=None)
+
+    for i in range(20000):  # Increase steps for longer visualization
+        y_feedback = -env.flowsolver.y_meas[0]
+        action = K0ss.step(y=[y_feedback], dt=env.flowsolver.params_time.dt)
+        # action = env.action_space.sample()
 
         obs, reward, terminated, truncated, info = env.step(action)
         total_reward += reward

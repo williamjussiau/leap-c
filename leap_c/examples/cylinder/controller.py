@@ -83,11 +83,10 @@ class CylinderController(ParameterizedController):
 
         # no batch yet
         # index depends on where is feedback sensor
-        u0 = Ky.step(y=np.asarray(obs[0, 0]), dt=self.cylinderConfig.dt)
+        u0 = -1 * Ky.step(y=np.asarray(obs[0, 0]), dt=self.cylinderConfig.dt)
         ctx = FlowControlCtx(
             controller_order=self.controller_order, controller_state=Ky.x
         )
-        # TODO try saturation
 
         return ctx, torch.from_numpy(u0)
 
@@ -114,8 +113,8 @@ class CylinderController(ParameterizedController):
             self.youlaControllerConfig.log_rho0
             + self.youlaControllerConfig.log_rho_scale
         )
-        low[0] = self.log_rho0 - 2  # log(rho)
-        high[0] = self.log_rho0 + 2  # log(rho)
+        low[0] = self.youlaControllerConfig.log_rho0 - 2  # log(rho)
+        high[0] = self.youlaControllerConfig.log_rho0 + 2  # log(rho)
         return gym.spaces.Box(low=low, high=high, dtype=np.float64)  # type:ignore
 
     @property

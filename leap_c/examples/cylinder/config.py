@@ -25,7 +25,7 @@ class YoulaControllerCfg:
 
     def __init__(self, G=None, K0=None):
         if G is None:
-            G = flowcontroller.Controller.from_file(
+            self.G = flowcontroller.Controller.from_file(
                 file=Path(
                     "leap_c",
                     "examples",
@@ -36,11 +36,13 @@ class YoulaControllerCfg:
                 x0=None,
             )
         if K0 is None:
-            Qx = np.diag(np.ones(shape=(G.nstates,)))
+            Qx = np.diag(np.ones(shape=(self.G.nstates,)))
             Qu = 1
-            Qw = np.diag(np.ones(shape=(G.nstates,)))
+            Qw = np.diag(np.ones(shape=(self.G.nstates,)))
             Qv = 1
-            K0, _, _ = flowconyu.lqg_regulator(G=G, Qx=Qx, Qu=Qu, Qw=Qw, Qv=Qv)
+            self.K0, _, _ = flowconyu.lqg_regulator(
+                G=self.G, Qx=Qx, Qu=Qu, Qw=Qw, Qv=Qv
+            )
             # positive feedback with G
 
         # K0 = flowcontroller.Controller.from_file(

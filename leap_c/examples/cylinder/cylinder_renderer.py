@@ -196,7 +196,7 @@ class CylinderRenderer:
         #     u_mag_sorted = np.linalg.norm(U_values_sorted, ord=2, axis=1)
         #     self.plot_sampled(coords=self.dof_coord_sorted, values=u_mag_sorted)
 
-        # Draw
+        # # Draw
         # self.figure.canvas.draw()
         # self.figure.canvas.flush_events()
         # if self.render_mode == "rgb_array":

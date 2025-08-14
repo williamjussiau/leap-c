@@ -57,7 +57,7 @@ class CylinderEnv(gym.Env):
         render_mode: str | None = None,
         render_method: str = "project",
         Re: float = 100,
-        Tf: float = 10,
+        Tf: float = 50,
         save_every: int = 100,
     ):
         self.Re = Re
@@ -108,8 +108,21 @@ class CylinderEnv(gym.Env):
         self.x_trajectory.append(self.x)  # type: ignore
         self.t = self.flowsolver.t
 
-        r = -np.linalg.norm(y) * 1 / np.sqrt(self.max_time)
+        # Reward
+        dt_over_Tf = self.flowsolver.params_time.dt / self.flowsolver.params_time.Tfinal
+        n_y = len(y)
+        rms_y = 1 / np.sqrt(n_y) * np.linalg.norm(y, ord=2)
+        r_unscaled = rms_y * dt_over_Tf
         # bigger reward when smaller y norm
+        # sum of r = mean (over time) of y rms
+        bnd_y = 0.01  # max m/s at sensor
+        scale_r = (
+            1
+            / np.sqrt(n_y)
+            * np.linalg.norm(np.repeat(bnd_y, repeats=n_y))
+            * dt_over_Tf
+        )
+        r = np.exp(-r_unscaled / scale_r) * dt_over_Tf
 
         # W: Stopping criteria?
         term = False
@@ -117,9 +130,11 @@ class CylinderEnv(gym.Env):
         info = {}
 
         if self.t >= self.max_time:
-            if len(self.x_trajectory) >= 10:
+            N_TRAJ_CHECK = 100
+            if len(self.x_trajectory) >= N_TRAJ_CHECK:
                 success = all(
-                    np.linalg.norm(self.x_trajectory[i]) < 0.1 for i in range(-10, 0)
+                    np.linalg.norm(self.x_trajectory[i]) < 1e-3
+                    for i in range(-N_TRAJ_CHECK, 0)
                 )
             else:
                 success = False  # Not enough data to determine success
@@ -143,7 +158,12 @@ class CylinderEnv(gym.Env):
             self.observation_space.seed(seed)
             self.action_space.seed(seed)
 
-        # reinit flowsolver
+        # reinit flowsolver -> reinstantiate?
+        self.flowsolver = instantiate_flowsolver(
+            Re=self.flowsolver.params_flow.Re,
+            Tf=self.flowsolver.params_time.Tfinal,
+            save_every=self.flowsolver.params_save.save_every,
+        )
         self.flowsolver.load_steady_state()
         self.flowsolver.initialize_time_stepping(
             ic=None
@@ -232,7 +252,7 @@ def instantiate_flowsolver(Re, Tf, save_every):
     )
 
     params_ic = flowsolverparameters.ParamIC(
-        xloc=2.0, yloc=0.0, radius=0.5, amplitude=1.0
+        xloc=2.0, yloc=0.0, radius=0.5, amplitude=0.1
     )
 
     fs = CylinderFlowSolver(
@@ -244,7 +264,7 @@ def instantiate_flowsolver(Re, Tf, save_every):
         params_restart=params_restart,
         params_control=params_control,
         params_ic=params_ic,
-        verbose=500,
+        verbose=save_every,
     )
 
     return fs

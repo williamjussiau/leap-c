@@ -78,7 +78,7 @@ class BestestHydronicHeatpumpParameters(BestestParameters):
     eta: float = 0.98
 
 
-def make_default_hvac_params() -> tuple[Parameter, ...]:
+def make_default_hvac_params(stagewise: bool = False) -> tuple[Parameter, ...]:
     """Return a tuple of default parameters for the hvac problem."""
     hydronic_params = BestestHydronicParameters().to_dict()
 
@@ -116,7 +116,7 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([convert_temperature(40.0, "celsius", "kelvin")]),
                 fix=False,
                 differentiable=True,
-                stagewise=True,
+                stagewise=stagewise,
             ),
             Parameter(
                 name="Phi_s",
@@ -125,7 +125,7 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([400.0]),
                 fix=False,
                 differentiable=True,
-                stagewise=True,
+                stagewise=stagewise,
             ),
             Parameter(
                 name="price",
@@ -134,7 +134,7 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([0.30]),
                 fix=False,
                 differentiable=True,
-                stagewise=True,
+                stagewise=stagewise,
             ),
         ]
     )
@@ -149,7 +149,7 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([convert_temperature(19.0, "celsius", "kelvin")]),
                 fix=False,
                 differentiable=False,
-                stagewise=True,
+                stagewise=stagewise,
             ),
             Parameter(
                 name="ub_Ti",
@@ -158,7 +158,7 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([convert_temperature(25.0, "celsius", "kelvin")]),
                 fix=False,
                 differentiable=False,
-                stagewise=True,
+                stagewise=stagewise,
             ),
             Parameter(
                 name="ref_Ti",
@@ -167,7 +167,7 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([convert_temperature(30.0, "celsius", "kelvin")]),
                 fix=False,
                 differentiable=True,
-                stagewise=True,
+                stagewise=stagewise,
             ),
         ]
     )
@@ -181,7 +181,7 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([0.001]),
                 fix=False,
                 differentiable=True,
-                stagewise=True,
+                stagewise=stagewise,
             ),
             Parameter(
                 name="q_dqh",
@@ -190,17 +190,18 @@ def make_default_hvac_params() -> tuple[Parameter, ...]:
                 upper_bound=np.array([1.5]),
                 fix=False,
                 differentiable=True,
-                stagewise=True,
+                stagewise=stagewise,
             ),
             Parameter(
                 name="q_ddqh",
-                value=np.array([1.0]), # weight for acceleration of heater power
+                value=np.array([1.0]),  # weight for acceleration of heater power
                 lower_bound=np.array([0.5]),
                 upper_bound=np.array([1.5]),
                 fix=False,
                 differentiable=True,
-                stagewise=True,
+                stagewise=stagewise,
             ),
-        ])
+        ]
+    )
 
     return tuple(params)

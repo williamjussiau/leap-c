@@ -21,7 +21,7 @@ def test_run_closed_loop(
     """
 
     env = PointMassEnv()
-    env.reset()
+    obs, _ = env.reset()
 
     # overwrite initial state closely over the goal
     goal_pos = env.goal.pos
@@ -32,15 +32,13 @@ def test_run_closed_loop(
     # replace the default reference with the goal position
     param = make_default_pointmass_params()
     old_xref_param = param.xref
-    kw = {**old_xref_param._asdict(), 'value': goal_x_ref}
+    kw = {**old_xref_param._asdict(), "value": goal_x_ref}
     param.xref = Parameter(**kw)
     controller = PointMassController(params=param)
 
-    default_param = controller.default_param
+    default_param = controller.default_param(obs)
     default_param = torch.as_tensor(default_param, dtype=torch.float32).unsqueeze(0)
     ctx = None
-
-    obs = env._observation()
 
     for _ in range(n_iter - 1):
         obs = torch.as_tensor(obs, dtype=torch.float32).unsqueeze(0)
@@ -51,9 +49,9 @@ def test_run_closed_loop(
         if terminated or truncated:
             break
 
+    assert np.linalg.norm(obs[:2] - goal_pos) < 0.2, (
+        "Final position is not close to the goal"
+    )  # Check that the final position is close to the goal
     assert (
-        np.linalg.norm(obs[:2] - goal_pos) < 0.2
-    ), "Final position is not close to the goal"  # Check that the final position is close to the goal
-    assert (
-        np.linalg.norm(obs[2:4]) < 0.1 
+        np.linalg.norm(obs[2:4]) < 0.1
     )  # Check that the final velocity is close to zero

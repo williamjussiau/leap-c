@@ -28,7 +28,6 @@ from leap_c.ocp.acados.torch import AcadosDiffMpc
 
 
 class ChainController(ParameterizedController):
-
     collate_fn_map = {AcadosDiffMpcCtx: collate_acados_diff_mpc_ctx}
 
     def __init__(
@@ -59,7 +58,8 @@ class ChainController(ParameterizedController):
         x_ref, u_ref = resting_chain_solver(p_last=pos_last_mass_ref)
 
         self.param_manager = AcadosParamManager(
-            params=asdict(params).values(), N_horizon=N_horizon  # type:ignore
+            params=asdict(params).values(),
+            N_horizon=N_horizon,  # type:ignore
         )
 
         self.ocp = export_parametric_ocp(
@@ -95,8 +95,7 @@ class ChainController(ParameterizedController):
         low, high = self.param_manager.get_p_global_bounds()
         return gym.spaces.Box(low=low, high=high, dtype=np.float64)  # type:ignore
 
-    @property
-    def default_param(self) -> np.ndarray:
+    def default_param(self, obs) -> np.ndarray:
         return self.param_manager.p_global_values.cat.full().flatten()  # type:ignore
 
 
@@ -144,10 +143,17 @@ def export_parametric_ocp(
         *[v for v in dyn_param_dict.values() if not isinstance(v, np.ndarray)]
     )
     f_expl = get_f_expl_expr(
-        x=x, u=u, p=dyn_param_dict, x0=param_manager.get("fix_point") #type:ignore
+        x=x,
+        u=u,
+        p=dyn_param_dict,
+        x0=param_manager.get("fix_point"),  # type:ignore
     )
     ocp.model.disc_dyn_expr = rk4_integrator_casadi(
-        f_expl, x.cat, u, p_cat_sym, tf / N_horizon  # type:ignore
+        f_expl,
+        x.cat,
+        u,
+        p_cat_sym,
+        tf / N_horizon,  # type:ignore
     )
 
     ######## Cost ########

@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 
 from leap_c.controller import ParameterizedController
-from leap_c.torch.nn.extractor import Extractor, IdentityExtractor, ScalingExtractor
+from leap_c.torch.nn.extractor import Extractor, ExtractorName, get_extractor_cls
 from leap_c.torch.nn.gaussian import SquashedGaussian, BoundedTransform
 from leap_c.torch.nn.mlp import MLP, MlpConfig
 from leap_c.torch.rl.buffer import ReplayBuffer
@@ -136,7 +136,12 @@ class FoaActor(nn.Module):
             action_unbounded, log_std, deterministic=deterministic
         )
         return SacFopActorOutput(
-            param, log_prob, {**gaussian_stats, **ctx.log}, action_squashed, ctx.status, ctx
+            param,
+            log_prob,
+            {**gaussian_stats, **ctx.log},
+            action_squashed,
+            ctx.status,
+            ctx,
         )
 
 
@@ -149,7 +154,7 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
         device: str,
         train_env: gym.Env,
         controller: ParameterizedController,
-        extractor_cls: Type[Extractor] = IdentityExtractor,
+        extractor_cls: Type[Extractor] | ExtractorName = "identity",
     ):
         """Initializes the SAC FOP trainer.
 
@@ -160,7 +165,7 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
             device: The device on which the trainer is running
             train_env: The training environment.
             controller: The controller to use for the policy.
-            extractor_cls: The feature extractor class to use for the policy.
+            extractor_cls: The class used for extracting features from observations.
         """
         super().__init__(cfg, val_env, output_path, device)
 
@@ -172,15 +177,18 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
         self.train_env = seed_env(wrap_env(train_env), seed=self.cfg.seed)
         self.controller = controller
 
+        if isinstance(extractor_cls, str):
+            extractor_cls = get_extractor_cls(extractor_cls)
+
         self.q = SacCritic(
-            extractor_cls,
+            extractor_cls,  # type: ignore
             train_env.action_space,
             observation_space,
             cfg.critic_mlp,
             cfg.num_critics,
         )
         self.q_target = SacCritic(
-            extractor_cls,
+            extractor_cls,  # type: ignore
             train_env.action_space,
             observation_space,
             cfg.critic_mlp,
@@ -191,7 +199,7 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
 
         if cfg.noise == "param":
             self.pi = FopActor(
-                extractor_cls(observation_space),
+                extractor_cls(observation_space),  # type: ignore
                 cfg.actor_mlp,
                 controller,
                 correction=cfg.entropy_correction,
@@ -199,7 +207,7 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
         elif cfg.noise == "action":
             self.pi = FoaActor(
                 train_env,
-                extractor_cls(observation_space),
+                extractor_cls(observation_space),  # type: ignore
                 cfg.actor_mlp,
                 controller,
             )
@@ -220,7 +228,9 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
             self.alpha_optim = None
             self.target_entropy = None
 
-        self.buffer = ReplayBuffer(cfg.buffer_size, device=device, collate_fn_map=controller.collate_fn_map)
+        self.buffer = ReplayBuffer(
+            cfg.buffer_size, device=device, collate_fn_map=controller.collate_fn_map
+        )
 
     def train_loop(self) -> Iterator[int]:
         is_terminated = is_truncated = True
@@ -252,11 +262,10 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
                 action
             )
 
-            if "episode" in info:
-                stats = info["episode"]
-                if "task" in info:
-                    stats.update(info["task"])
-                self.report_stats("train", info["episode"])
+            if "episode" in info or "task" in info:
+                self.report_stats(
+                    "train", {**info.get("episode", {}), **info.get("task", {})}
+                )
 
             self.buffer.put(
                 (
@@ -368,7 +377,7 @@ class SacFopTrainer(Trainer[SacFopTrainerConfig]):
 
         action = pi_output.action.cpu().numpy()[0]
 
-        return action, pi_output.ctx , pi_output.stats
+        return action, pi_output.ctx, pi_output.stats
 
     @property
     def optimizers(self) -> list[torch.optim.Optimizer]:

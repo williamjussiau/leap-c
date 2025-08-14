@@ -7,16 +7,17 @@ from typing import Callable, Optional, Any, Generator
 import torch
 from gymnasium import Env
 from gymnasium.wrappers import RecordVideo
+from timeit import default_timer
 
 
 def episode_rollout(
-        policy: Callable,
-        env: Env,
-        episodes: int = 1,
-        render_episodes: int = 0,
-        render_human: bool = False,
-        video_folder: Optional[str | Path] = None,
-        name_prefix: Optional[str] = None,
+    policy: Callable,
+    env: Env,
+    episodes: int = 1,
+    render_episodes: int = 0,
+    render_human: bool = False,
+    video_folder: Optional[str | Path] = None,
+    name_prefix: Optional[str] = None,
 ) -> Generator[tuple[dict[str, bool | Any], defaultdict[Any, list]], Any, None]:
     """Rollout an episode and returns the cumulative reward.
 
@@ -42,10 +43,13 @@ def episode_rollout(
     if video_folder is not None and name_prefix is None:
         raise ValueError("name_prefix must be set if video_path is set.")
 
-    render_trigger = lambda episode_id: episode_id < render_episodes
+    def render_trigger(episode_id):
+        return episode_id < render_episodes
 
     if video_folder is not None:
-        env = RecordVideo(env, video_folder, name_prefix=name_prefix, episode_trigger=render_trigger)
+        env = RecordVideo(
+            env, video_folder, name_prefix=name_prefix, episode_trigger=render_trigger
+        )
 
     with torch.no_grad():
         for episode in range(episodes):
@@ -56,8 +60,12 @@ def episode_rollout(
             terminated = False
             truncated = False
 
+            cum_inference_time = 0.0
+
             while not terminated and not truncated:
+                t0 = default_timer()
                 a, stats = policy(o)
+                cum_inference_time += default_timer() - t0
 
                 if stats is not None:
                     for key, value in stats.items():
@@ -77,12 +85,15 @@ def episode_rollout(
 
                 o = o_prime
 
-            assert "episode" in info, "The environment did not return episode information."
+            assert "episode" in info, (
+                "The environment did not return episode information."
+            )
             rollout_stats = {
                 "score": info["episode"]["r"],
                 "length": info["episode"]["l"],
                 "terminated": terminated,
                 "truncated": truncated,
+                "inference_time": cum_inference_time / info["episode"]["l"],
             }
             rollout_stats.update(episode_stats)
 

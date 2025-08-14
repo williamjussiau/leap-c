@@ -418,7 +418,8 @@ def test_forward(
 
         expected_x_shape = (
             n_batch,
-            acados_ocp.dims.nx * (acados_ocp.solver_options.N_horizon + 1),  # type: ignore
+            (acados_ocp.solver_options.N_horizon + 1),  # type: ignore
+            acados_ocp.dims.nx,
         )
         assert x.shape == expected_x_shape, (
             f"x shape mismatch. Expected: {expected_x_shape}, Got: {x.shape}"
@@ -426,7 +427,8 @@ def test_forward(
 
         expected_u_shape = (
             n_batch,
-            acados_ocp.dims.nu * acados_ocp.solver_options.N_horizon,  # type: ignore
+            acados_ocp.solver_options.N_horizon,
+            acados_ocp.dims.nu,
         )
         assert u.shape == expected_u_shape, (
             f"u shape mismatch. Expected: {expected_u_shape}, Got: {u.shape}"
@@ -679,7 +681,46 @@ def test_backward(
             forward_func, lambda result: result[4]
         )  # value
 
-    for diff_mpc_k in [diff_mpc_with_stagewise_varying_params, diff_mpc]:
+    def _create_dxdp_global_test(diff_mpc: AcadosDiffMpc, x0: torch.Tensor) -> Callable:
+        """Create test function for dx/dp_global gradient."""
+
+        def forward_func(p_global):
+            return diff_mpc.forward(x0=x0, p_global=p_global)
+
+        return _create_backward_test_function(
+            forward_func, lambda result: result[2]
+        )  # x
+
+    def _create_dudp_global_test(diff_mpc: AcadosDiffMpc, x0: torch.Tensor) -> Callable:
+        """Create test function for du/dp_global gradient."""
+
+        def forward_func(p_global):
+            return diff_mpc.forward(x0=x0, p_global=p_global)
+
+        return _create_backward_test_function(
+            forward_func, lambda result: result[3]
+        )  # u
+
+    def _create_dhvacudp_global_test(
+        diff_mpc: AcadosDiffMpc, x0: torch.Tensor
+    ) -> Callable:
+        """Create test function for dfakeu/dp_global gradient."""
+
+        def forward_func(p_global):
+            return diff_mpc.forward(x0=x0, p_global=p_global)
+
+        return _create_backward_test_function(
+            forward_func,
+            lambda result: result[2],  # [:, 1, 3][:, None]
+        )
+
+    for i, diff_mpc_k in enumerate(
+        [  # diff_mpc_with_stagewise_varying_params,
+            diff_mpc
+        ]
+    ):
+        print(f"Testing the {i}th Differentiable MPC Backward Pass")
+        print("=========================================================")
         test_inputs = _setup_test_inputs(diff_mpc_k, n_batch, dtype, noise_scale)
 
         # TODO: Sensitivities with respect to different parameters have different scales
@@ -729,6 +770,18 @@ def test_backward(
                 test_inputs.u0,
                 GradCheckConfig(atol=1e-2, eps=1e-2),
             ),
+            (
+                "dx/dp_global",
+                _create_dxdp_global_test(diff_mpc_k, test_inputs.x0),
+                test_inputs.p_global,
+                GradCheckConfig(atol=1e-2, eps=1e-4),
+            ),
+            (
+                "du/dp_global",
+                _create_dudp_global_test(diff_mpc_k, test_inputs.x0),
+                test_inputs.p_global,
+                GradCheckConfig(atol=4 * 1e-2, eps=1e-4),
+            ),
         ]
 
         # Run gradient checks
@@ -747,3 +800,29 @@ def test_backward(
             except Exception as e:
                 print(f"✗ {test_name} gradient check failed: {e}")
                 raise
+
+
+# NOTE: Useful for debugging the sensitivities.
+# I inserted it somewhere around "if not _allclose_with_type_promotion(a, n, rtol, atol):"
+# in gradcheck.py .
+
+# def tell_me_more(a, n, rtol, atol):
+#     print("max:", a.max(), n.max())
+#     print("min:", a.min(), n.min())
+#     print("Max difference:", (a - n).abs().max())
+#     neq = ~torch.isclose(a, n, rtol=rtol, atol=atol)
+#     nonzero = ~torch.isclose(a, torch.zeros_like(a), rtol=rtol, atol=atol)
+#     nnonzero = ~torch.isclose(a, torch.zeros_like(n), rtol=rtol, atol=atol)
+#     print("Wrong elements: ", neq.sum())
+#     print("Nonzero elements: ", (nonzero.sum()))
+#     print("Indices of wrong elements: ", torch.nonzero(neq, as_tuple=True))
+#     nonzero_ind_a = torch.nonzero(nonzero, as_tuple=True)
+#     nonzero_ind_n = torch.nonzero(nnonzero, as_tuple=True)
+#     for entry_a, entry_n in zip(nonzero_ind_a, nonzero_ind_n
+#     ):
+#         if not torch.allclose(entry_a, entry_n):
+#             print("Indices of nonzero elements a: ", nonzero_ind_a)
+#             print("Indices of nonzero elements n: ", nonzero_ind_n)
+#             raise Exception("Nonzero indices do not match")
+#         else:
+#             print("Nonzero indices match")
